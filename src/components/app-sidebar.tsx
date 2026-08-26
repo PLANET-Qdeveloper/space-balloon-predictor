@@ -6,7 +6,7 @@ import {
   SidebarHeader,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { Balloon, CalendarDays, ChevronsDown, ChevronsUp, Clock, Crosshair, Dice5, Loader, MapPin, Pencil, Play, Sigma } from "lucide-react"
+import { Balloon, CalendarDays, ChevronsDown, ChevronsUp, Clock, Crosshair, Dice5, Layers, Loader, MapPin, Pencil, Play, Sigma } from "lucide-react"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group"
 import {
   Field,
@@ -14,12 +14,15 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Button } from "@/components/ui/button"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { useState, useEffect } from "react"
 
 export type PositionMode = "preset" | "custom" | "map"
+
+export type WeatherSource = "gfs" | "gefs"
 
 export interface PredictorFormValues {
   launchLat: number
@@ -32,11 +35,14 @@ export interface PredictorFormValues {
   monteCarloEnabled: boolean
   burstAltitudeStd: string
   numSamples: string
+  weatherSource: WeatherSource
+  gefsNumMembers: string
 }
 
 export type ProgressInfo =
   | { stage: "preparing" }
   | { stage: "downloading_gfs"; current: number; total: number }
+  | { stage: "downloading_gefs"; current: number; total: number; member: string }
   | { stage: "decoding_grib" }
   | { stage: "running_simulation" }
   | { stage: "running_monte_carlo"; current: number; total: number }
@@ -90,6 +96,8 @@ function formatProgressText(progress: ProgressInfo): string {
       return "準備中..."
     case "downloading_gfs":
       return `気象データ取得中 (${progress.current}/${progress.total})...`
+    case "downloading_gefs":
+      return `気象データ取得中 (${progress.current}/${progress.total})...`
     case "decoding_grib":
       return "気象データを解析中..."
     case "running_simulation":
@@ -123,6 +131,8 @@ export function AppSidebar({
     monteCarloEnabled: false,
     burstAltitudeStd: "1000",
     numSamples: "50",
+    weatherSource: "gfs",
+    gefsNumMembers: "31",
   }
 
   const form = useForm({
@@ -169,6 +179,79 @@ export function AppSidebar({
       : positionMode === "map"
         ? "地図から選択"
         : (matchedPreset ? matchedPreset.name : "選択済み")
+
+  const scatterFields = (
+    <>
+      {/* 標準偏差 */}
+      <form.Field
+        name="burstAltitudeStd"
+        validators={{
+          onChange: ({ value }) => validatePositiveNumber(value, "標準偏差"),
+        }}
+        children={(field) => (
+          <Field>
+            <FieldLabel className="text-xs" htmlFor={field.name}>バースト高度の標準偏差</FieldLabel>
+            <InputGroup>
+              <InputGroupInput
+                id={field.name}
+                name={field.name}
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(e) => field.handleChange(e.target.value)}
+                type="text"
+                placeholder="標準偏差を入力"
+              />
+              <InputGroupAddon align="inline-start">
+                <Sigma className="text-muted-foreground" />
+              </InputGroupAddon>
+              <InputGroupAddon align="inline-end">
+                <InputGroupText className="text-muted-foreground">m</InputGroupText>
+              </InputGroupAddon>
+            </InputGroup>
+            {field.state.meta.isTouched && field.state.meta.errors.length ? (
+              <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+            ) : null}
+          </Field>
+        )}
+      />
+
+      {/* サンプル数 */}
+      <form.Field
+        name="numSamples"
+        validators={{
+          onChange: ({ value }) => {
+            if (!value) return "サンプル数を入力してください"
+            const num = Number(value)
+            if (isNaN(num) || !Number.isInteger(num)) return "整数で入力してください"
+            if (num < 1 || num > 200) return "1〜200 の範囲で入力してください"
+            return undefined
+          },
+        }}
+        children={(field) => (
+          <Field>
+            <FieldLabel className="text-xs" htmlFor={field.name}>サンプル数</FieldLabel>
+            <InputGroup>
+              <InputGroupInput
+                id={field.name}
+                name={field.name}
+                value={field.state.value}
+                onBlur={field.handleBlur}
+                onChange={(e) => field.handleChange(e.target.value)}
+                type="text"
+                placeholder="サンプル数を入力"
+              />
+              <InputGroupAddon align="inline-start">
+                <Dice5 className="text-muted-foreground" />
+              </InputGroupAddon>
+            </InputGroup>
+            {field.state.meta.isTouched && field.state.meta.errors.length ? (
+              <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+            ) : null}
+          </Field>
+        )}
+      />
+    </>
+  )
 
   return (
     <Sidebar variant="floating">
@@ -513,103 +596,108 @@ export function AppSidebar({
               )}
             />
 
-            {/* モンテカルロ */}
+            {/* 気象データソース */}
             <form.Subscribe
-              selector={(state) => state.values.monteCarloEnabled}
-              children={(monteCarloEnabled) => (
+              selector={(state) => state.values.weatherSource}
+              children={(weatherSource) => (
+                <Field>
+                  <FieldLabel className="text-xs flex items-center gap-1.5">
+                    <Layers className="size-3.5" />
+                    気象データソース
+                  </FieldLabel>
+                  <Select
+                    value={weatherSource}
+                    onValueChange={(val) => form.setFieldValue("weatherSource", val as WeatherSource)}
+                  >
+                    <SelectTrigger className="w-full mt-1.5">
+                      <SelectValue placeholder="データソースを選択" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="gfs">GFS (0.25°)</SelectItem>
+                      <SelectItem value="gefs">GEFS (アンサンブル)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            />
+
+            {/* アンサンブル / モンテカルロ設定 */}
+            <form.Subscribe
+              selector={(state) => state.values.weatherSource}
+              children={(weatherSource) => (
                 <>
-                  <Field>
-                    <div className="flex items-center justify-between">
-                      <FieldLabel className="text-xs flex items-center gap-1.5">
-                        モンテカルロ法
-                      </FieldLabel>
-                      <button
-                        type="button"
-                        onClick={() => form.setFieldValue("monteCarloEnabled", !monteCarloEnabled)}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
-                          monteCarloEnabled ? "bg-primary" : "bg-input"
-                        }`}
-                      >
-                        <span
-                          className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform ${
-                            monteCarloEnabled ? "translate-x-4" : "translate-x-0"
-                          }`}
-                        />
-                      </button>
-                    </div>
-                  </Field>
+                  {weatherSource === "gefs" && (
+                    <form.Field
+                      name="gefsNumMembers"
+                      validators={{
+                        onChange: ({ value }) => {
+                          if (!value) return "メンバー数を入力してください"
+                          const num = Number(value)
+                          if (isNaN(num) || !Number.isInteger(num)) return "整数で入力してください"
+                          if (num < 1 || num > 31) return "1〜31 の範囲で入力してください"
+                          return undefined
+                        },
+                      }}
+                      children={(field) => (
+                        <Field>
+                          <FieldLabel className="text-xs" htmlFor={field.name}>アンサンブルメンバー数</FieldLabel>
+                          <InputGroup>
+                            <InputGroupInput
+                              id={field.name}
+                              name={field.name}
+                              value={field.state.value}
+                              onBlur={field.handleBlur}
+                              onChange={(e) => field.handleChange(e.target.value)}
+                              type="text"
+                              placeholder="1-31"
+                            />
+                            <InputGroupAddon align="inline-start">
+                              <Layers className="text-muted-foreground" />
+                            </InputGroupAddon>
+                            <InputGroupAddon align="inline-end">
+                              <InputGroupText className="text-muted-foreground">メンバー</InputGroupText>
+                            </InputGroupAddon>
+                          </InputGroup>
+                          {field.state.meta.isTouched && field.state.meta.errors.length ? (
+                            <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+                          ) : null}
+                        </Field>
+                      )}
+                    />
+                  )}
 
-                  {monteCarloEnabled && (
-                    <>
-                      {/* 標準偏差 */}
-                      <form.Field
-                        name="burstAltitudeStd"
-                        validators={{
-                          onChange: ({ value }) => validatePositiveNumber(value, "標準偏差"),
-                        }}
-                        children={(field) => (
+                  {weatherSource === "gfs" ? (
+                    <form.Subscribe
+                      selector={(state) => state.values.monteCarloEnabled}
+                      children={(monteCarloEnabled) => (
+                        <>
                           <Field>
-                            <FieldLabel className="text-xs" htmlFor={field.name}>バースト高度の標準偏差</FieldLabel>
-                            <InputGroup>
-                              <InputGroupInput
-                                id={field.name}
-                                name={field.name}
-                                value={field.state.value}
-                                onBlur={field.handleBlur}
-                                onChange={(e) => field.handleChange(e.target.value)}
-                                type="text"
-                                placeholder="標準偏差を入力"
-                              />
-                              <InputGroupAddon align="inline-start">
-                                <Sigma className="text-muted-foreground" />
-                              </InputGroupAddon>
-                              <InputGroupAddon align="inline-end">
-                                <InputGroupText className="text-muted-foreground">m</InputGroupText>
-                              </InputGroupAddon>
-                            </InputGroup>
-                            {field.state.meta.isTouched && field.state.meta.errors.length ? (
-                              <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
-                            ) : null}
+                            <div className="flex items-center justify-between">
+                              <FieldLabel className="text-xs flex items-center gap-1.5">
+                                モンテカルロ法
+                              </FieldLabel>
+                              <button
+                                type="button"
+                                onClick={() => form.setFieldValue("monteCarloEnabled", !monteCarloEnabled)}
+                                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+                                  monteCarloEnabled ? "bg-primary" : "bg-input"
+                                }`}
+                              >
+                                <span
+                                  className={`pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform ${
+                                    monteCarloEnabled ? "translate-x-4" : "translate-x-0"
+                                  }`}
+                                />
+                              </button>
+                            </div>
                           </Field>
-                        )}
-                      />
 
-                      {/* サンプル数 */}
-                      <form.Field
-                        name="numSamples"
-                        validators={{
-                          onChange: ({ value }) => {
-                            if (!value) return "サンプル数を入力してください"
-                            const num = Number(value)
-                            if (isNaN(num) || !Number.isInteger(num)) return "整数で入力してください"
-                            if (num < 1 || num > 200) return "1〜200 の範囲で入力してください"
-                            return undefined
-                          },
-                        }}
-                        children={(field) => (
-                          <Field>
-                            <FieldLabel className="text-xs" htmlFor={field.name}>サンプル数</FieldLabel>
-                            <InputGroup>
-                              <InputGroupInput
-                                id={field.name}
-                                name={field.name}
-                                value={field.state.value}
-                                onBlur={field.handleBlur}
-                                onChange={(e) => field.handleChange(e.target.value)}
-                                type="text"
-                                placeholder="サンプル数を入力"
-                              />
-                              <InputGroupAddon align="inline-start">
-                                <Dice5 className="text-muted-foreground" />
-                              </InputGroupAddon>
-                            </InputGroup>
-                            {field.state.meta.isTouched && field.state.meta.errors.length ? (
-                              <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
-                            ) : null}
-                          </Field>
-                        )}
-                      />
-                    </>
+                          {monteCarloEnabled && scatterFields}
+                        </>
+                      )}
+                    />
+                  ) : (
+                    scatterFields
                   )}
                 </>
               )}

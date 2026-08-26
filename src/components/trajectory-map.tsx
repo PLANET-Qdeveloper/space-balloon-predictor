@@ -4,7 +4,11 @@ import { LineLayer, PathLayer, ScatterplotLayer } from "@deck.gl/layers"
 import maplibregl from "maplibre-gl"
 import { useMemo, useEffect, useCallback, useState, useRef } from "react"
 import { TrajectorySummary } from "@/components/trajectory-summary"
-import { findClosestSigmaIndex } from "@/lib/geo"
+import {
+  findDefaultSelectedIndex,
+  hasSigma,
+  pointFillColor,
+} from "@/lib/mc-points"
 import type {
   MonteCarloPoint,
   MonteCarloResult,
@@ -118,13 +122,6 @@ function MapController({
   return null
 }
 
-function deviationToColor(deviation: number): [number, number, number, number] {
-  const absDev = Math.abs(deviation)
-  if (absDev <= 1) return [34, 197, 94, 200]    // green
-  if (absDev <= 2) return [234, 179, 8, 200]    // yellow
-  return [239, 68, 68, 200]                      // red
-}
-
 export function TrajectoryMap({
   predictionData,
   monteCarloData = null,
@@ -188,18 +185,55 @@ export function TrajectoryMap({
     if (selectedPointIndex !== null && selectedPointIndex !== undefined) {
       return selectedPointIndex
     }
-    return monteCarloData ? findClosestSigmaIndex(monteCarloData.points) : null
+    return monteCarloData
+      ? findDefaultSelectedIndex(monteCarloData.points)
+      : null
   }, [selectedPointIndex, monteCarloData])
 
-  const burstPos = useMemo(() => {
-    const pts = allPoints ?? []
-    if (pts.length === 0) return null
-    let peak = pts[0]
-    for (const p of pts) {
-      if (p.alt > peak.alt) peak = p
+  const useSigmaColors = useMemo(
+    () => (monteCarloData ? hasSigma(monteCarloData.points) : false),
+    [monteCarloData],
+  )
+
+  const burstPositions = useMemo(() => {
+    function findPeak(pts: TrajectoryPoint[]) {
+      if (pts.length === 0) return null
+      let peak = pts[0]
+      for (const p of pts) {
+        if (p.alt > peak.alt) peak = p
+      }
+      return { lat: peak.lat, lon: peak.lon, alt: peak.alt }
     }
-    return { lat: peak.lat, lon: peak.lon, alt: peak.alt }
-  }, [allPoints])
+
+    const result: { lat: number; lon: number; alt: number; isHovered: boolean }[] = []
+
+    const activePeak = (() => {
+      if (activeSelectedIndex !== null && activeSelectedIndex !== undefined && monteCarloData?.trajectories?.[activeSelectedIndex]) {
+        const traj = monteCarloData.trajectories[activeSelectedIndex]
+        return findPeak([...(traj.ascent_path ?? []), ...(traj.descent_path ?? [])])
+      }
+      return findPeak(allPoints ?? [])
+    })()
+
+    if (activePeak) {
+      result.push({ ...activePeak, isHovered: false })
+    }
+
+    if (
+      hoveredPointIndex !== null &&
+      hoveredPointIndex !== undefined &&
+      hoveredPointIndex !== activeSelectedIndex &&
+      monteCarloData?.trajectories?.[hoveredPointIndex]
+    ) {
+      const traj = monteCarloData.trajectories[hoveredPointIndex]
+      const hoverPeak = findPeak([...(traj.ascent_path ?? []), ...(traj.descent_path ?? [])])
+      if (hoverPeak) {
+        result.push({ ...hoverPeak, isHovered: true })
+      }
+    }
+
+    return result
+  }, [allPoints, monteCarloData, hoveredPointIndex, activeSelectedIndex])
 
   const deckLayers = useMemo(() => {
     const layers: any[] = []
@@ -350,7 +384,7 @@ export function TrajectoryMap({
             getFillColor: (_d: MonteCarloPoint, { index }: { index: number }) =>
               activeSelectedIndex === index
                 ? [255, 255, 255, 255]
-                : deviationToColor(_d.deviation_sigma),
+                : pointFillColor(_d, useSigmaColors),
             getLineColor: (_d: MonteCarloPoint, { index }: { index: number }) =>
               activeSelectedIndex === index
                 ? [0, 0, 0, 255]
@@ -452,21 +486,24 @@ export function TrajectoryMap({
       }
     }
 
-    if (burstPos) {
-      layers.push(
-        new PathLayer({
-          id: "burst-point-circle",
-          data: [{ path: tinyCirclePath(burstPos.lon, burstPos.lat, burstPos.alt, 20) }],
-          getPath: (d: { path: [number, number, number][] }) => d.path,
-          getColor: [255, 215, 0, 255],
-          widthUnits: "pixels",
-          getWidth: 6,
-          billboard: true,
-          rounded: true,
-          jointRounded: true,
-          pickable: false,
-        }),
-      )
+    if (burstPositions.length > 0) {
+      for (let i = 0; i < burstPositions.length; i++) {
+        const bp = burstPositions[i]
+        layers.push(
+          new PathLayer({
+            id: `burst-point-circle-${i}`,
+            data: [{ path: tinyCirclePath(bp.lon, bp.lat, bp.alt, 20) }],
+            getPath: (d: { path: [number, number, number][] }) => d.path,
+            getColor: bp.isHovered ? [255, 200, 0, 180] : [255, 215, 0, 255],
+            widthUnits: "pixels",
+            getWidth: bp.isHovered ? 4 : 6,
+            billboard: true,
+            rounded: true,
+            jointRounded: true,
+            pickable: false,
+          }),
+        )
+      }
     }
 
     if (chartFocusPoint) {
@@ -503,7 +540,7 @@ export function TrajectoryMap({
     }
 
     return layers
-  }, [predictionData, monteCarloData, activeSelectedIndex, hoveredPointIndex, chartFocusPoint, burstPos, onPointSelect])
+  }, [predictionData, monteCarloData, activeSelectedIndex, hoveredPointIndex, chartFocusPoint, burstPositions, onPointSelect])
 
   const landingPos = useMemo(() => {
     if (monteCarloData) return null
@@ -536,7 +573,11 @@ export function TrajectoryMap({
         minZoom={2}
         onClick={handleMapClick}
       >
-        <MapController trajectoryPoints={allPoints} monteCarloPoints={monteCarloPoints} cursorValue={mapCursor} />
+        <MapController
+          trajectoryPoints={allPoints}
+          monteCarloPoints={monteCarloPoints}
+          cursorValue={mapCursor}
+        />
 
         <DeckGLOverlay 
           layers={deckLayers} 

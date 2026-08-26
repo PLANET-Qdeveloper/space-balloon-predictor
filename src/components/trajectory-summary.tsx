@@ -2,7 +2,11 @@ import { useMemo, useState } from "react"
 import { Navigation, Timer, Gauge, Download } from "lucide-react"
 import { AltitudeTimeChart } from "@/components/altitude-time-chart"
 import { Button } from "@/components/ui/button"
-import { findClosestSigmaIndex, haversineKm } from "@/lib/geo"
+import { haversineKm } from "@/lib/geo"
+import {
+  findDefaultSelectedIndex,
+  sigmaToDotClass,
+} from "@/lib/mc-points"
 import { buildTrajectoryKml, saveKmlFile } from "@/lib/kml"
 import type { MonteCarloResult, PredictionData, TrajectoryPoint } from "@/types"
 
@@ -21,13 +25,6 @@ function formatDuration(totalS: number | undefined): string {
   const h = Math.floor(totalMin / 60)
   const m = totalMin % 60
   return `${h}時間${m}分`
-}
-
-function sigmaColor(sigma: number): string {
-  const abs = Math.abs(sigma)
-  if (abs <= 1) return "bg-[rgb(34,197,94)]"
-  if (abs <= 2) return "bg-[rgb(234,179,8)]"
-  return "bg-[rgb(239,68,68)]"
 }
 
 function StatRow({
@@ -72,7 +69,7 @@ export function TrajectorySummary({
     if (selectedPointIndex !== null && selectedPointIndex !== undefined) {
       return selectedPointIndex
     }
-    return findClosestSigmaIndex(monteCarloData.points)
+    return findDefaultSelectedIndex(monteCarloData.points)
   }, [selectedPointIndex, monteCarloData])
 
   const isMonteCarlo = !!monteCarloData
@@ -168,12 +165,12 @@ export function TrajectorySummary({
         value={drift !== undefined ? drift.toFixed(1) : "—"}
         unit="km"
       />
-      {isMonteCarlo && point && (
+      {isMonteCarlo && point && point.deviation_sigma != null && (
         <StatRow
           icon={<SigmaIcon />}
           label="偏差 σ"
           value={`${point.deviation_sigma >= 0 ? "+" : ""}${point.deviation_sigma.toFixed(2)}`}
-          dotColor={sigmaColor(point.deviation_sigma)}
+          dotColor={sigmaToDotClass(point.deviation_sigma)}
         />
       )}
 

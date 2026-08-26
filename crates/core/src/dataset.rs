@@ -1,6 +1,11 @@
+pub mod gefs;
 pub mod gfs;
 pub mod loader;
 
+pub use gefs::{
+    GefsForecast, GefsForecastSet, GefsMember, GefsResolution, gefs_filter_url,
+    resolve_gefs_forecasts,
+};
 pub use gfs::{GfsForecast, GfsForecastSet, GfsRegion, gfs_filter_url, resolve_gfs_forecasts};
 
 use std::sync::Arc;

@@ -20,7 +20,7 @@ export interface MonteCarloPoint {
   landing_lat: number
   landing_lon: number
   burst_altitude: number
-  deviation_sigma: number
+  deviation_sigma: number | null
 }
 
 export interface MonteCarloTrajectory {

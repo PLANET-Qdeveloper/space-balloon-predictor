@@ -38,7 +38,23 @@ function App() {
         launchDateTime.getTime() - 12 * 60 * 60 * 1000,
       )
 
-      if (values.monteCarloEnabled) {
+      if (values.weatherSource === "gefs") {
+        const result = await invoke<MonteCarloResult>("run_gefs_simulation", {
+          launchLat: values.launchLat,
+          launchLon: values.launchLon,
+          launchAlt: 10.0,
+          gefsRunTime: gfsRunTime.toISOString(),
+          launchTime: launchDateTime.toISOString(),
+          ascentRate: Number(values.ascentRate),
+          descentRate: Number(values.descentRate),
+          burstAltitudeMean: Number(values.burstAltitude),
+          burstAltitudeStd: Number(values.burstAltitudeStd),
+          numMembers: Number(values.gefsNumMembers),
+          numSamples: Number(values.numSamples),
+        })
+        console.log("GEFS ensemble result:", result)
+        setMonteCarloData(result)
+      } else if (values.monteCarloEnabled) {
         const result = await invoke<MonteCarloResult>("run_monte_carlo", {
           launchLat: values.launchLat,
           launchLon: values.launchLon,
