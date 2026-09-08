@@ -6,7 +6,7 @@ import {
   SidebarHeader,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { Balloon, CalendarDays, ChevronsDown, ChevronsUp, Clock, Crosshair, Dice5, Layers, Loader, MapPin, Pencil, Play, Sigma } from "lucide-react"
+import { Balloon, CalendarDays, ChevronsDown, ChevronsUp, Clock, Crosshair, Dice5, Layers, Loader, MapPin, Pencil, Play, Sigma, Weight } from "lucide-react"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group"
 import {
   Field,
@@ -29,6 +29,8 @@ export interface PredictorFormValues {
   launchLon: number
   launchDate: Date | undefined
   launchTime: string
+  balloonClass: string
+  totalWeight: string
   ascentRate: string
   descentRate: string
   burstAltitude: string
@@ -125,6 +127,8 @@ export function AppSidebar({
     launchLon: launchLon ?? DEFAULT_LON,
     launchDate: undefined,
     launchTime: "",
+    balloonClass: "2000",
+    totalWeight: "6000",
     ascentRate: "6",
     descentRate: "6",
     burstAltitude: "30000",
@@ -471,7 +475,7 @@ export function AppSidebar({
                 }}
                 children={(field) => (
                   <Field className="flex-1">
-                    <FieldLabel className="text-xs" htmlFor={field.name}>放球時刻</FieldLabel>
+                    <FieldLabel className="text-xs" htmlFor={field.name}>放球時刻（JST）</FieldLabel>
                     <InputGroup>
                       <InputGroupInput
                         id={field.name}
@@ -496,15 +500,83 @@ export function AppSidebar({
             </FieldGroup>
 
             <FieldGroup className="flex flex-col gap-y-2">
+              {/* 気球種別 */}
+              <form.Field
+                name="balloonClass"
+                validators={{
+                  onChange: ({ value }) => {
+                    if (!["1000", "1500", "2000", "3000"].includes(value)) return "気球種別を選択してください"
+                    return undefined
+                  },
+                }}
+                children={(field) => (
+                  <Field className="flex-1">
+                    <FieldLabel className="text-xs" htmlFor={field.name}>気球種別</FieldLabel>
+                    <Select
+                      value={field.state.value}
+                      onValueChange={(val) => field.handleChange(val)}
+                    >
+                      <SelectTrigger className="w-full mt-1.5" id={field.name}>
+                        <SelectValue placeholder="気球を選択" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1000">1000g</SelectItem>
+                        <SelectItem value="1500">1500g</SelectItem>
+                        <SelectItem value="2000">2000g</SelectItem>
+                        <SelectItem value="3000">3000g</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {field.state.meta.isTouched && field.state.meta.errors.length ? (
+                      <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+                    ) : null}
+                  </Field>
+                )}
+              />
+
+              {/* 総重量 */}
+              <form.Field
+                name="totalWeight"
+                validators={{
+                  onChange: ({ value }) => validatePositiveNumber(value, "総重量"),
+                }}
+                children={(field) => (
+                  <Field className="flex-1">
+                    <FieldLabel className="text-xs" htmlFor={field.name}>総重量</FieldLabel>
+                    <InputGroup>
+                      <InputGroupInput
+                        id={field.name}
+                        name={field.name}
+                        value={field.state.value}
+                        onBlur={field.handleBlur}
+                        onChange={(e) => field.handleChange(e.target.value)}
+                        type="text"
+                        placeholder="総重量（g）"
+                      />
+                      <InputGroupAddon align="inline-start">
+                        <Weight className="text-muted-foreground" />
+                      </InputGroupAddon>
+                      <InputGroupAddon align="inline-end">
+                        <InputGroupText className="text-muted-foreground">g</InputGroupText>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    {field.state.meta.isTouched && field.state.meta.errors.length ? (
+                      <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+                    ) : null}
+                  </Field>
+                )}
+              />
+            </FieldGroup>
+
+            <FieldGroup className="flex flex-col gap-y-2">
               {/* 上昇速度 */}
               <form.Field
                 name="ascentRate"
                 validators={{
-                  onChange: ({ value }) => validatePositiveNumber(value, "上昇速度"),
+                  onChange: ({ value }) => validatePositiveNumber(value, "目標上昇速度"),
                 }}
                 children={(field) => (
                   <Field className="flex-1">
-                    <FieldLabel className="text-xs" htmlFor={field.name}>上昇速度</FieldLabel>
+                    <FieldLabel className="text-xs" htmlFor={field.name}>目標上昇速度</FieldLabel>
                     <InputGroup>
                       <InputGroupInput
                         id={field.name}

@@ -13,7 +13,7 @@ use crate::geo::interpolation::lerp;
 
 pub use grib1::Grib1File;
 pub use grib2::Grib2File;
-pub use types::{AnyGribFile, PressureUnit, open_grib};
+pub use types::{AnyGribFile, HeightUnit, PressureUnit, open_grib};
 
 use types::{
     AtmosphereLayer, AtmospherePoint, PressureHeightPair, interpolate_grids,

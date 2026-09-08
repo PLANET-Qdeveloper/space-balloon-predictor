@@ -23,6 +23,22 @@ impl PressureUnit {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeightUnit {
+    DeciMeters,
+    Geopotential,
+}
+
+impl HeightUnit {
+    /// デコード済み生値を高度 [m] に変換する係数
+    pub(crate) fn to_meters_scale(self) -> f64 {
+        match self {
+            HeightUnit::DeciMeters => 0.1,
+            HeightUnit::Geopotential => 1.0 / 9.80665,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct GridMetadata {
     pub(crate) lon_coords: Arc<Vec<f32>>,

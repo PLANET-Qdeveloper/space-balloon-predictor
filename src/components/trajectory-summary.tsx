@@ -4,7 +4,10 @@ import { AltitudeTimeChart } from "@/components/altitude-time-chart"
 import { Button } from "@/components/ui/button"
 import { haversineKm } from "@/lib/geo"
 import {
+  containmentToDotClass,
+  ensembleContainments,
   findDefaultSelectedIndex,
+  hasSigma,
   sigmaToDotClass,
 } from "@/lib/mc-points"
 import { buildTrajectoryKml, saveKmlFile } from "@/lib/kml"
@@ -16,6 +19,7 @@ interface TrajectorySummaryProps {
   selectedPointIndex?: number | null
   launchLat?: number
   launchLon?: number
+  launchTimeUtc?: string | null
   onPointHover?: (point: (TrajectoryPoint & { leg: "ascent" | "descent" }) | null) => void
 }
 
@@ -61,6 +65,7 @@ export function TrajectorySummary({
   selectedPointIndex = null,
   launchLat,
   launchLon,
+  launchTimeUtc = null,
   onPointHover,
 }: TrajectorySummaryProps) {
   const [exportFeedback, setExportFeedback] = useState<"idle" | "saved" | "error">("idle")
@@ -73,6 +78,16 @@ export function TrajectorySummary({
   }, [selectedPointIndex, monteCarloData])
 
   const isMonteCarlo = !!monteCarloData
+
+  const showSigma = monteCarloData ? hasSigma(monteCarloData.points) : false
+  const containments = useMemo(() => {
+    if (!monteCarloData || showSigma) return null
+    return ensembleContainments(monteCarloData.points)
+  }, [monteCarloData, showSigma])
+  const selectedContainment =
+    containments && activeSelectedIndex != null
+      ? containments[activeSelectedIndex] ?? null
+      : null
 
   const point = useMemo(() => {
     if (!monteCarloData) return null
@@ -173,6 +188,14 @@ export function TrajectorySummary({
           dotColor={sigmaToDotClass(point.deviation_sigma)}
         />
       )}
+      {isMonteCarlo && point && selectedContainment != null && (
+        <StatRow
+          icon={<SigmaIcon />}
+          label="アンサンブル包含率"
+          value={`${(selectedContainment * 100).toFixed(0)}%`}
+          dotColor={containmentToDotClass(selectedContainment)}
+        />
+      )}
 
       <div className="border-t pt-2">
         <AltitudeTimeChart
@@ -180,6 +203,7 @@ export function TrajectorySummary({
           descent={descent}
           meanAscent={meanAscent}
           meanDescent={meanDescent}
+          launchTimeUtc={launchTimeUtc}
           onPointHover={onPointHover}
         />
       </div>

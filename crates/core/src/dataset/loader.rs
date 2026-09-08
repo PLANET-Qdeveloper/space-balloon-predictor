@@ -1,12 +1,13 @@
 use chrono::{DateTime, Utc};
 use log::{debug, error, info, warn};
 
-use crate::grib::{AnyGribFile, Atmosphere, PressureUnit, open_grib};
+use crate::grib::{AnyGribFile, Atmosphere, HeightUnit, PressureUnit, open_grib};
 
 pub fn load_grib_series(
     grib_paths: &[String],
     launch_time: DateTime<Utc>,
     pressure_unit: PressureUnit,
+    height_unit: HeightUnit,
 ) -> Result<(Vec<(DateTime<Utc>, Atmosphere)>, DateTime<Utc>), Box<dyn std::error::Error>> {
     let mut all_atmospheres: Vec<(DateTime<Utc>, Atmosphere)> = Vec::new();
 
@@ -27,7 +28,7 @@ pub fn load_grib_series(
                     warn!("Failed to parse as GRIB2: {}", e);
                 }
             },
-            Ok(AnyGribFile::V1(grib1)) => match grib1.to_atmosphere() {
+            Ok(AnyGribFile::V1(grib1)) => match grib1.to_atmosphere(pressure_unit, height_unit) {
                 Ok(vec) => {
                     debug!("  -> Read {} time steps from GRIB1", vec.len());
                     for (dt, _) in &vec {
@@ -96,6 +97,7 @@ pub fn load_ensemble_series(
     secondary_paths: &[String],
     launch_time: DateTime<Utc>,
     pressure_unit: PressureUnit,
+    height_unit: HeightUnit,
     lat: f64,
     lon: f64,
 ) -> Result<(Vec<(DateTime<Utc>, Atmosphere)>, DateTime<Utc>), Box<dyn std::error::Error>> {
@@ -109,7 +111,7 @@ pub fn load_ensemble_series(
 
     let msm_series: Vec<(DateTime<Utc>, Atmosphere)> = match open_grib(primary_path_obj) {
         Ok(AnyGribFile::V2(grib2)) => grib2.to_atmosphere(pressure_unit)?,
-        Ok(AnyGribFile::V1(grib1)) => grib1.to_atmosphere()?,
+        Ok(AnyGribFile::V1(grib1)) => grib1.to_atmosphere(pressure_unit, height_unit)?,
         Err(e) => return Err(format!("Failed to open primary file: {}", e).into()),
     };
     debug!("  -> {} time steps from MSM", msm_series.len());
@@ -133,7 +135,7 @@ pub fn load_ensemble_series(
                     warn!("Failed to parse as GRIB2: {}", e);
                 }
             },
-            Ok(AnyGribFile::V1(grib1)) => match grib1.to_atmosphere() {
+            Ok(AnyGribFile::V1(grib1)) => match grib1.to_atmosphere(pressure_unit, height_unit) {
                 Ok(vec) => {
                     debug!("  -> {} time steps from GRIB1", vec.len());
                     gfs_series.extend(vec);

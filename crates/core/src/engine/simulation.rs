@@ -2,7 +2,7 @@ use crate::dataset::Dataset;
 use crate::grib::Atmosphere;
 use crate::geo::coords::Geodetic;
 use crate::geo::interpolation::lerp;
-use crate::engine::physics::{WindVector, air_density, standard_atmosphere_density, terminal_velocity, WGS84_E2, WGS84_A};
+use crate::engine::physics::{WindVector, air_density, ascent_velocity, calibrate_ascent, standard_atmosphere_density, standard_atmosphere_pt, terminal_velocity, volume_burst_reached, AscentCalibration, WGS84_E2, WGS84_A};
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -72,11 +72,23 @@ impl Trajectory {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct AscentParams {
+    /// 総重量 W [kg]（気球＋ペイロード等すべて）
+    pub gross_mass_kg: f64,
+    /// 地上での目標上昇速度 v0 [m/s]
+    pub target_rate_m_s: f64,
+    /// 上昇速度係数 k（気球種別から決定。`physics::ascent_coeff_k` 参照）
+    pub coeff_k: f64,
+    /// バースト体積 [m^3]。None の場合は高度のみでバースト判定
+    pub burst_volume_m3: Option<f64>,
+}
+
 /// シミュレーションの設定項目
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SimConfig {
     pub launch_site: Geodetic,
-    pub ascent_rate_m_s: f64,
+    pub ascent: AscentParams,
     pub ground_descend_rate_m_s: f64,
     pub burst_altitude_m: f64,
     pub dt: f64,
@@ -91,6 +103,8 @@ pub struct Simulator {
     cumulative_hours: Vec<f64>,
     /// 発射時刻 - 最初の気象データ時刻（時間単位）
     launch_offset_hours: f64,
+    /// 地上較正済みの上昇パラメータ。較正失敗時は None（目標速度で定速上昇）
+    ascent_cal: Option<AscentCalibration>,
 }
 
 /// StateRate に基づいてバルーン状態を dt 分だけ進める
@@ -134,6 +148,13 @@ impl Simulator {
             atmospheres,
             cumulative_hours,
             launch_offset_hours,
+            ascent_cal: calibrate_ascent(
+                config.ascent.coeff_k,
+                config.ascent.gross_mass_kg,
+                config.ascent.target_rate_m_s,
+                config.launch_site.alt,
+                config.ascent.burst_volume_m3,
+            ),
         }
     }
 
@@ -210,24 +231,32 @@ impl Simulator {
             WindVector::default()
         };
 
+        let (pressure_pa, temperature_k) = match (&prev_state, &next_state) {
+            (Some(prev), Some(next)) => (
+                lerp(prev.pressure_pa, next.pressure_pa, time_ratio),
+                lerp(prev.temperature_k, next.temperature_k, time_ratio),
+            ),
+            (Some(prev), None) => (prev.pressure_pa, prev.temperature_k),
+            (None, Some(next)) => (next.pressure_pa, next.temperature_k),
+            _ => standard_atmosphere_pt(state.alt),
+        };
+        let (pressure_pa, temperature_k) =
+            if pressure_pa.is_finite() && pressure_pa > 0.0
+                && temperature_k.is_finite() && temperature_k > 0.0
+            {
+                (pressure_pa, temperature_k)
+            } else {
+                standard_atmosphere_pt(state.alt)
+            };
+
         // 垂直速度の決定
         let vertical_velocity = if !state.is_burst {
-            self.config.ascent_rate_m_s
+            match &self.ascent_cal {
+                Some(cal) => ascent_velocity(cal, pressure_pa, temperature_k),
+                None => self.config.ascent.target_rate_m_s,
+            }
         } else {
-            // 破裂後の落下速度を求めるため、高度における空気密度を補間する
-            // 気圧と気温から密度を算出し、前後時刻で線形補間
-            let density_at_altitude = match (&prev_state, &next_state) {
-                // 両方の時刻にデータがある場合は密度を補間
-                (Some(prev), Some(next)) => {
-                    let density_prev = air_density(prev.pressure_pa, prev.temperature_k);
-                    let density_next = air_density(next.pressure_pa, next.temperature_k);
-                    lerp(density_prev, density_next, time_ratio)
-                }
-                (Some(prev), None) => air_density(prev.pressure_pa, prev.temperature_k),
-                (None, Some(next)) => air_density(next.pressure_pa, next.temperature_k),
-                _ => standard_atmosphere_density(state.alt),
-            };
-            // 欠損値により密度が非有限になった場合は標準大気モデルで代替する
+            let density_at_altitude = air_density(pressure_pa, temperature_k);
             let density_at_altitude =
                 if density_at_altitude.is_finite() && density_at_altitude > 0.0 {
                     density_at_altitude
@@ -300,10 +329,18 @@ impl Simulator {
         while !(state.is_burst && state.alt <= self.config.launch_site.alt) {
             let mut next_state = self.rk4_step(&state, self.config.dt);
 
-            if !state.is_burst && next_state.alt >= self.config.burst_altitude_m {
-                next_state.is_burst = true;
+            if !state.is_burst {
+                let alt_burst = next_state.alt >= self.config.burst_altitude_m;
+                let vol_burst = match &self.ascent_cal {
+                    Some(cal) => {
+                        let (p, t) = standard_atmosphere_pt(next_state.alt.max(0.0));
+                        volume_burst_reached(cal, p, t)
+                    }
+                    None => false,
+                };
+                next_state.is_burst = alt_burst || vol_burst;
             } else {
-                next_state.is_burst = state.is_burst;
+                next_state.is_burst = true;
             }
 
             state = next_state;
@@ -348,6 +385,15 @@ mod tests {
         crate::grib::Atmosphere::for_test(levels)
     }
 
+    fn test_ascent() -> AscentParams {
+        AscentParams {
+            gross_mass_kg: 6.0,
+            target_rate_m_s: 5.0,
+            coeff_k: 148.0 / 23.6,
+            burst_volume_m3: None,
+        }
+    }
+
     #[test]
     fn dynamics_is_finite_with_nan_grid() {
         let dataset = Dataset::from_atmospheres(vec![(Utc::now(), nan_atmosphere())]).unwrap();
@@ -357,7 +403,7 @@ mod tests {
                 lon: 139.0,
                 alt: 10.0,
             },
-            ascent_rate_m_s: 5.0,
+            ascent: test_ascent(),
             ground_descend_rate_m_s: 5.0,
             burst_altitude_m: 10_000.0,
             dt: 5.0,
@@ -386,7 +432,7 @@ mod tests {
                 lon: 139.0,
                 alt: 10.0,
             },
-            ascent_rate_m_s: 5.0,
+            ascent: test_ascent(),
             ground_descend_rate_m_s: 5.0,
             burst_altitude_m: 10_000.0,
             dt: 5.0,
@@ -402,5 +448,42 @@ mod tests {
             assert!((-90.0..=90.0).contains(&s.lat), "lat out of range: {}", s.lat);
             assert!((0.0..360.0).contains(&s.lon), "lon out of range: {}", s.lon);
         }
+    }
+
+    #[test]
+    fn ascent_rate_grows_with_altitude_in_dynamics() {
+        let dataset = Dataset::from_atmospheres(vec![(Utc::now(), nan_atmosphere())]).unwrap();
+        let config = SimConfig {
+            launch_site: Geodetic {
+                lat: 35.0,
+                lon: 139.0,
+                alt: 10.0,
+            },
+            ascent: AscentParams {
+                gross_mass_kg: 6.0,
+                target_rate_m_s: 7.0,
+                coeff_k: 148.0 / 23.6,
+                burst_volume_m3: None,
+            },
+            ground_descend_rate_m_s: 5.0,
+            burst_altitude_m: 35_000.0,
+            dt: 5.0,
+        };
+        let simulator = Simulator::new(config, dataset, Utc::now());
+        let low = BalloonState {
+            lat: 35.0,
+            lon: 139.0,
+            alt: 10.0,
+            time: 0.0,
+            is_burst: false,
+        };
+        let high = BalloonState {
+            alt: 20_000.0,
+            ..low
+        };
+        let v_low = simulator.dynamics(&low).dalt;
+        let v_high = simulator.dynamics(&high).dalt;
+        assert!((v_low - 7.0).abs() < 0.05, "v_low = {}", v_low);
+        assert!(v_high > v_low, "v_high = {} should exceed v_low = {}", v_high, v_low);
     }
 }

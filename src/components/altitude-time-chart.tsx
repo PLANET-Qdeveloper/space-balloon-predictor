@@ -17,10 +17,25 @@ interface AltitudeTimeChartProps {
   descent: TrajectoryPoint[]
   meanAscent?: TrajectoryPoint[]
   meanDescent?: TrajectoryPoint[]
+  launchTimeUtc?: string | null
   onPointHover?: (point: (TrajectoryPoint & { leg: "ascent" | "descent" }) | null) => void
 }
 
 const TROPOPAUSE_M = 11_000
+
+function formatJst(launchTimeUtc: string | null | undefined, elapsedMin: number): string | null {
+  if (!launchTimeUtc) return null
+  const base = Date.parse(launchTimeUtc)
+  if (isNaN(base)) return null
+  const at = new Date(base + elapsedMin * 60_000)
+  const hhmm = at.toLocaleString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+  return `${hhmm} JST`
+}
 
 function toPoints(path: TrajectoryPoint[]): { t: number; alt: number; lat: number; lon: number }[] {
   return path
@@ -43,6 +58,7 @@ export function AltitudeTimeChart({
   descent,
   meanAscent,
   meanDescent,
+  launchTimeUtc = null,
   onPointHover,
 }: AltitudeTimeChartProps) {
   const lastEmittedRef = useRef<
@@ -201,6 +217,10 @@ export function AltitudeTimeChart({
               }
               const label = active && props.label !== undefined ? props.label : null
               const value = active && payload?.length ? payload[0].value : undefined
+              const jst =
+                label !== null && Number.isFinite(Number(label))
+                  ? formatJst(launchTimeUtc, Number(label))
+                  : null
               return (
                 <div
                   style={{
@@ -215,6 +235,9 @@ export function AltitudeTimeChart({
                 >
                   {label !== null && (
                     <p className="text-muted-foreground">{`${Number(label).toFixed(1)}分`}</p>
+                  )}
+                  {jst !== null && (
+                    <p className="text-muted-foreground">{jst}</p>
                   )}
                   {value !== undefined && (
                     <p>{`${Math.round(Number(value)).toLocaleString()} m`}</p>

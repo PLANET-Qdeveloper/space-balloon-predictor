@@ -27,3 +27,4 @@ target/
 *.grib2
 *.bin
 *.kml
+data/

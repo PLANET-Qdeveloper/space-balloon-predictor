@@ -5,8 +5,8 @@ use std::sync::Arc;
 use crate::geo::grid::LatLonGrid;
 
 use super::decode::{build_levels, store_grib2_param};
-use super::parameter::{GribParameter, GRIB1_ISOBARIC_SURFACE};
-use super::types::{GridMetadata, PressureLevelBuilder};
+use super::parameter::{GribParameter, GRIB1_ISOBARIC_SURFACE, PARAM_H};
+use super::types::{GridMetadata, HeightUnit, PressureLevelBuilder, PressureUnit};
 use super::Atmosphere;
 
 pub struct Grib1File {
@@ -48,9 +48,10 @@ impl<'a> Grib1Message<'a> {
         GribParameter::from_grib1_parameter_number(pd.parameter_number)
     }
 
-    fn pressure_pa(&self) -> Option<i32> {
+    fn pressure_pa(&self, unit: PressureUnit) -> Option<i32> {
         let pd = self.msg.grib1_product_definition()?;
-        Some(pd.level_value as i32)
+        // GRIB1 の等圧面レベル値は hPa（ERA5・MSM）。Pa 換算する
+        Some(unit.to_pa(pd.level_value as f64) as i32)
     }
 
     fn grid_metadata(&self) -> Option<GridMetadata> {
@@ -90,6 +91,8 @@ impl<'a> Grib1Message<'a> {
 impl Grib1File {
     pub fn to_atmosphere(
         &self,
+        unit: PressureUnit,
+        height_unit: HeightUnit,
     ) -> Result<Vec<(chrono::DateTime<chrono::Utc>, Atmosphere)>, Box<dyn std::error::Error>> {
         let file = grib_reader::GribFile::open(&self.path)?;
 
@@ -129,7 +132,12 @@ impl Grib1File {
                     Some(p) => p,
                     None => continue,
                 };
-                let pressure_pa = match grib.pressure_pa() {
+                let unit_scale = if param == PARAM_H {
+                    height_unit.to_meters_scale()
+                } else {
+                    unit_scale
+                };
+                let pressure_pa = match grib.pressure_pa(unit) {
                     Some(p) => p,
                     None => continue,
                 };

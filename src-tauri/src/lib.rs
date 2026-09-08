@@ -10,9 +10,10 @@ use tauri::{AppHandle, Emitter};
 use space_balloon_predictor_rs::dataset::{Dataset, GfsRegion, gfs_filter_url, gefs_filter_url};
 use space_balloon_predictor_rs::dataset::gfs::REGION_MARGIN_DEG;
 use space_balloon_predictor_rs::dataset::gefs::{GefsMember, GefsResolution};
-use space_balloon_predictor_rs::engine::simulation::{SimConfig, Simulator, Trajectory};
+use space_balloon_predictor_rs::engine::simulation::{AscentParams, SimConfig, Simulator, Trajectory};
+use space_balloon_predictor_rs::engine::physics::ascent_coeff_k;
 use space_balloon_predictor_rs::geo::coords::{EARTH_RADIUS, Geodetic};
-use space_balloon_predictor_rs::grib::PressureUnit;
+use space_balloon_predictor_rs::grib::{HeightUnit, PressureUnit};
 
 use rand::Rng;
 use rand_distr::Normal;
@@ -406,6 +407,32 @@ fn trajectory_to_result(trajectory: &Trajectory, launch_site: Geodetic) -> Simul
     }
 }
 
+/// 気球種別＋総重量＋目標上昇速度から上昇パラメータを組み立てる
+fn ascent_params(
+    ascent_rate: f64,
+    gross_mass_kg: f64,
+    balloon_class_g: u32,
+) -> Result<AscentParams, String> {
+    let coeff_k = ascent_coeff_k(balloon_class_g).ok_or_else(|| {
+        format!(
+            "Unknown balloon class: {}g. Choose from 1000, 1500, 2000, 3000.",
+            balloon_class_g
+        )
+    })?;
+    if !(gross_mass_kg > 0.0) {
+        return Err("gross_mass_kg must be positive".into());
+    }
+    if !(ascent_rate > 0.0) {
+        return Err("ascent_rate must be positive".into());
+    }
+    Ok(AscentParams {
+        gross_mass_kg,
+        target_rate_m_s: ascent_rate,
+        coeff_k,
+        burst_volume_m3: None,
+    })
+}
+
 #[tauri::command]
 async fn run_simulation(
     app: AppHandle,
@@ -415,11 +442,14 @@ async fn run_simulation(
     gfs_run_time: String,
     launch_time: String,
     ascent_rate: f64,
+    gross_mass_kg: f64,
+    balloon_class_g: u32,
     descent_rate: f64,
     burst_altitude: f64,
 ) -> Result<SimulationResult, String> {
     let gfs_run: DateTime<Utc> = gfs_run_time.parse().map_err(|e| format!("Invalid gfs_run_time: {}", e))?;
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
 
     let launch_site = Geodetic {
         lat: launch_lat,
@@ -439,6 +469,7 @@ async fn run_simulation(
             &file_paths,
             launch,
             PressureUnit::Pascal,
+            HeightUnit::DeciMeters,
         )
         .map_err(|e| format!("Failed to load GRIB data: {}", e))?;
 
@@ -446,7 +477,7 @@ async fn run_simulation(
 
         let config = SimConfig {
             launch_site,
-            ascent_rate_m_s: ascent_rate,
+            ascent,
             ground_descend_rate_m_s: descent_rate,
             burst_altitude_m: burst_altitude,
             dt: 5.0,
@@ -471,6 +502,8 @@ async fn run_monte_carlo(
     gfs_run_time: String,
     launch_time: String,
     ascent_rate: f64,
+    gross_mass_kg: f64,
+    balloon_class_g: u32,
     descent_rate: f64,
     burst_altitude_mean: f64,
     burst_altitude_std: f64,
@@ -478,6 +511,7 @@ async fn run_monte_carlo(
 ) -> Result<MonteCarloResult, String> {
     let gfs_run: DateTime<Utc> = gfs_run_time.parse().map_err(|e| format!("Invalid gfs_run_time: {}", e))?;
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
 
     let launch_site = Geodetic {
         lat: launch_lat,
@@ -497,6 +531,7 @@ async fn run_monte_carlo(
             &file_paths,
             launch,
             PressureUnit::Pascal,
+            HeightUnit::DeciMeters,
         )
         .map_err(|e| format!("Failed to load GRIB data: {}", e))?;
 
@@ -540,7 +575,7 @@ async fn run_monte_carlo(
 
                 let config = SimConfig {
                     launch_site,
-                    ascent_rate_m_s: ascent_rate,
+                    ascent,
                     ground_descend_rate_m_s: descent_rate,
                     burst_altitude_m: sampled_burst,
                     dt: 5.0,
@@ -581,7 +616,7 @@ async fn run_monte_carlo(
         // 平均バースト高度の経路を計算
         let mean_config = SimConfig {
             launch_site,
-            ascent_rate_m_s: ascent_rate,
+            ascent,
             ground_descend_rate_m_s: descent_rate,
             burst_altitude_m: burst_altitude_mean,
             dt: 5.0,
@@ -613,6 +648,8 @@ async fn run_gefs_simulation(
     gefs_run_time: String,
     launch_time: String,
     ascent_rate: f64,
+    gross_mass_kg: f64,
+    balloon_class_g: u32,
     descent_rate: f64,
     burst_altitude_mean: f64,
     burst_altitude_std: f64,
@@ -621,6 +658,7 @@ async fn run_gefs_simulation(
 ) -> Result<MonteCarloResult, String> {
     let gefs_run: DateTime<Utc> = gefs_run_time.parse().map_err(|e| format!("Invalid gefs_run_time: {}", e))?;
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
 
     let launch_site = Geodetic {
         lat: launch_lat,
@@ -693,6 +731,7 @@ async fn run_gefs_simulation(
                 &file_paths,
                 launch,
                 PressureUnit::Pascal,
+                HeightUnit::DeciMeters,
             )
             .map_err(|e| format!("Failed to load GEFS GRIB data for member {}: {}", member, e))?;
 
@@ -716,7 +755,7 @@ async fn run_gefs_simulation(
                 .map(|&sampled_burst| {
                     let config = SimConfig {
                         launch_site,
-                        ascent_rate_m_s: ascent_rate,
+                        ascent,
                         ground_descend_rate_m_s: descent_rate,
                         burst_altitude_m: sampled_burst,
                         dt: 5.0,
@@ -755,7 +794,7 @@ async fn run_gefs_simulation(
                 if use_scatter {
                     let mean_config = SimConfig {
                         launch_site,
-                        ascent_rate_m_s: ascent_rate,
+                        ascent,
                         ground_descend_rate_m_s: descent_rate,
                         burst_altitude_m: burst_altitude_mean,
                         dt: 5.0,

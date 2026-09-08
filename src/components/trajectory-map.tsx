@@ -5,6 +5,7 @@ import maplibregl from "maplibre-gl"
 import { useMemo, useEffect, useCallback, useState, useRef } from "react"
 import { TrajectorySummary } from "@/components/trajectory-summary"
 import {
+  ensembleContainments,
   findDefaultSelectedIndex,
   hasSigma,
   pointFillColor,
@@ -44,6 +45,7 @@ interface TrajectoryMapProps {
   onPointSelect?: (index: number | null) => void
   launchLat?: number
   launchLon?: number
+  launchTimeUtc?: string | null
   mapSelectionMode?: boolean
   onMapClick?: (lat: number, lon: number) => void
 }
@@ -129,6 +131,7 @@ export function TrajectoryMap({
   onPointSelect,
   launchLat,
   launchLon,
+  launchTimeUtc = null,
   mapSelectionMode = false,
   onMapClick,
 }: TrajectoryMapProps) {
@@ -194,6 +197,11 @@ export function TrajectoryMap({
     () => (monteCarloData ? hasSigma(monteCarloData.points) : false),
     [monteCarloData],
   )
+
+  const containments = useMemo(() => {
+    if (!monteCarloData || useSigmaColors) return null
+    return ensembleContainments(monteCarloData.points)
+  }, [monteCarloData, useSigmaColors])
 
   const burstPositions = useMemo(() => {
     function findPeak(pts: TrajectoryPoint[]) {
@@ -384,7 +392,7 @@ export function TrajectoryMap({
             getFillColor: (_d: MonteCarloPoint, { index }: { index: number }) =>
               activeSelectedIndex === index
                 ? [255, 255, 255, 255]
-                : pointFillColor(_d, useSigmaColors),
+                : pointFillColor(_d, useSigmaColors, containments?.[index]),
             getLineColor: (_d: MonteCarloPoint, { index }: { index: number }) =>
               activeSelectedIndex === index
                 ? [0, 0, 0, 255]
@@ -540,7 +548,7 @@ export function TrajectoryMap({
     }
 
     return layers
-  }, [predictionData, monteCarloData, activeSelectedIndex, hoveredPointIndex, chartFocusPoint, burstPositions, onPointSelect])
+  }, [predictionData, monteCarloData, activeSelectedIndex, hoveredPointIndex, chartFocusPoint, burstPositions, containments, onPointSelect])
 
   const landingPos = useMemo(() => {
     if (monteCarloData) return null
@@ -639,6 +647,7 @@ export function TrajectoryMap({
         selectedPointIndex={selectedPointIndex}
         launchLat={launchLat}
         launchLon={launchLon}
+        launchTimeUtc={launchTimeUtc}
         onPointHover={handleChartFocus}
       />
     </div>

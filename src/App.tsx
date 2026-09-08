@@ -17,6 +17,7 @@ function App() {
   const [positionMode, setPositionMode] = useState<PositionMode>("preset")
   const [launchLat, setLaunchLat] = useState<number>(DEFAULT_LAT)
   const [launchLon, setLaunchLon] = useState<number>(DEFAULT_LON)
+  const [launchTimeUtc, setLaunchTimeUtc] = useState<string | null>(null)
 
   const handlePredict = useCallback(async (values: PredictorFormValues) => {
     setProgress({ stage: "preparing" })
@@ -31,8 +32,19 @@ function App() {
     try {
       const launchDate = values.launchDate!
       const [hours, minutes] = values.launchTime.split(":").map(Number)
-      const launchDateTime = new Date(launchDate)
-      launchDateTime.setUTCHours(hours, minutes, 0, 0)
+      // 入力はJST壁時計として解釈し、UTCに変換する（-9時間）
+      const launchDateTime = new Date(
+        Date.UTC(
+          launchDate.getFullYear(),
+          launchDate.getMonth(),
+          launchDate.getDate(),
+          hours - 9,
+          minutes,
+          0,
+          0,
+        ),
+      )
+      setLaunchTimeUtc(launchDateTime.toISOString())
 
       const gfsRunTime = new Date(
         launchDateTime.getTime() - 12 * 60 * 60 * 1000,
@@ -46,6 +58,8 @@ function App() {
           gefsRunTime: gfsRunTime.toISOString(),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
+          grossMassKg: Number(values.totalWeight) / 1000,
+          balloonClassG: Number(values.balloonClass),
           descentRate: Number(values.descentRate),
           burstAltitudeMean: Number(values.burstAltitude),
           burstAltitudeStd: Number(values.burstAltitudeStd),
@@ -62,6 +76,8 @@ function App() {
           gfsRunTime: gfsRunTime.toISOString(),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
+          grossMassKg: Number(values.totalWeight) / 1000,
+          balloonClassG: Number(values.balloonClass),
           descentRate: Number(values.descentRate),
           burstAltitudeMean: Number(values.burstAltitude),
           burstAltitudeStd: Number(values.burstAltitudeStd),
@@ -77,6 +93,8 @@ function App() {
           gfsRunTime: gfsRunTime.toISOString(),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
+          grossMassKg: Number(values.totalWeight) / 1000,
+          balloonClassG: Number(values.balloonClass),
           descentRate: Number(values.descentRate),
           burstAltitude: Number(values.burstAltitude),
         })
@@ -118,6 +136,7 @@ function App() {
           onPointSelect={setSelectedPointIndex}
           launchLat={launchLat}
           launchLon={launchLon}
+          launchTimeUtc={launchTimeUtc}
           mapSelectionMode={positionMode === "map"}
           onMapClick={(lat, lon) => {
             setLaunchLat(lat)

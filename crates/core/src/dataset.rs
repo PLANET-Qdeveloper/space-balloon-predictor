@@ -13,7 +13,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use log::info;
 
-use crate::grib::{Atmosphere, PressureUnit};
+use crate::grib::{Atmosphere, HeightUnit, PressureUnit};
 
 #[derive(Clone)]
 pub struct Dataset {
@@ -46,9 +46,10 @@ impl Dataset {
         grib_paths: &[String],
         launch_time: DateTime<Utc>,
         pressure_unit: PressureUnit,
+        height_unit: HeightUnit,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let (atmospheres, _base_time) =
-            loader::load_grib_series(grib_paths, launch_time, pressure_unit)?;
+            loader::load_grib_series(grib_paths, launch_time, pressure_unit, height_unit)?;
         Self::from_atmospheres(atmospheres)
     }
 
@@ -58,6 +59,7 @@ impl Dataset {
         secondary_paths: &[String],
         launch_time: DateTime<Utc>,
         pressure_unit: PressureUnit,
+        height_unit: HeightUnit,
         lat: f64,
         lon: f64,
     ) -> Result<Self, Box<dyn std::error::Error>> {
@@ -66,6 +68,7 @@ impl Dataset {
             secondary_paths,
             launch_time,
             pressure_unit,
+            height_unit,
             lat,
             lon,
         )?;

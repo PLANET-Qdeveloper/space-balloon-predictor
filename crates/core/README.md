@@ -16,13 +16,19 @@ let dataset = Dataset::from_grib_files(
     &["weather.grib2".to_string()],
     launch_time,
     PressureUnit::HectoPascal,
+    HeightUnit::DeciMeters,
 )?;
 
 // シミュレーション設定
 let launch_site = Geodetic { lat: 35.0, lon: 139.0, alt: 10.0 };
 let config = SimConfig {
     launch_site,
-    ascent_rate_m_s: 5.0,
+    ascent: AscentParams {
+        gross_mass_kg: 6.0,
+        target_rate_m_s: 5.0,
+        coeff_k: ascent_coeff_k(2000).unwrap(),
+        burst_volume_m3: None,
+    },
     ground_descend_rate_m_s: 5.0,
     burst_altitude_m: 30000.0,
     dt: 5.0,
@@ -61,7 +67,7 @@ use rand::Rng;
 use space_balloon_predictor_rs::{Dataset, Simulator};
 use space_balloon_predictor_rs::engine::simulation::SimConfig;
 
-let dataset = Dataset::from_grib_files(&paths, launch_time, PressureUnit::HectoPascal)?;
+let dataset = Dataset::from_grib_files(&paths, launch_time, PressureUnit::HectoPascal, HeightUnit::DeciMeters)?;
 let mut rng = rand::thread_rng();
 
 // 並列シミュレーション
@@ -70,7 +76,12 @@ let trajectories: Vec<_> = (0..1000)
     .map(|_| {
         let config = SimConfig {
             launch_site,
-            ascent_rate_m_s: rng.gen_range(4.5..5.5),
+            ascent: AscentParams {
+                gross_mass_kg: 6.0,
+                target_rate_m_s: rng.gen_range(4.5..5.5),
+                coeff_k: ascent_coeff_k(2000).unwrap(),
+                burst_volume_m3: None,
+            },
             ground_descend_rate_m_s: 5.0,
             burst_altitude_m: rng.gen_range(28000.0..32000.0),
             dt: 5.0,
