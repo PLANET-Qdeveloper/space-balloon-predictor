@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Navigation, Timer, Gauge, Download } from "lucide-react"
+import { Navigation, Timer, Gauge, Download, CloudSun } from "lucide-react"
 import { AltitudeTimeChart } from "@/components/altitude-time-chart"
 import { Button } from "@/components/ui/button"
 import { haversineKm } from "@/lib/geo"
@@ -29,6 +29,23 @@ function formatDuration(totalS: number | undefined): string {
   const h = Math.floor(totalMin / 60)
   const m = totalMin % 60
   return `${h}時間${m}分`
+}
+
+function formatModelRunTime(iso: string | undefined): string | null {
+  if (!iso) return null
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+
+  const jst = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date)
+  return `${jst} JST`
 }
 
 function StatRow({
@@ -104,6 +121,10 @@ export function TrajectorySummary({
   }
 
   const single = predictionData
+  const model = isMonteCarlo ? monteCarloData?.model : single?.model
+  const modelRunTime = formatModelRunTime(
+    isMonteCarlo ? monteCarloData?.model_run_time_utc : single?.model_run_time_utc,
+  )
 
   const drift =
     isMonteCarlo && point && launchLat != null && launchLon != null
@@ -162,6 +183,13 @@ export function TrajectorySummary({
       <p className="font-medium text-sm mb-1">
         軌道の概要
       </p>
+
+      {model && modelRunTime && (
+        <div className="flex items-start gap-1.5 border-b pb-2 mb-1 text-[11px] text-muted-foreground">
+          <CloudSun className="size-3.5 shrink-0 mt-0.5" />
+          <span>{model}モデル実行時刻: {modelRunTime}</span>
+        </div>
+      )}
 
       <StatRow
         icon={<Gauge className="size-3.5" />}

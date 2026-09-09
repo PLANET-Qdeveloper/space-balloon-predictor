@@ -6,6 +6,8 @@ export interface TrajectoryPoint {
 }
 
 export interface PredictionData {
+  model: string
+  model_run_time_utc: string
   ascent_path: TrajectoryPoint[]
   descent_path: TrajectoryPoint[]
   stratosphere_duration_s: number
@@ -29,6 +31,8 @@ export interface MonteCarloTrajectory {
 }
 
 export interface MonteCarloResult {
+  model: string
+  model_run_time_utc: string
   points: MonteCarloPoint[]
   mean_landing_lat: number
   mean_landing_lon: number

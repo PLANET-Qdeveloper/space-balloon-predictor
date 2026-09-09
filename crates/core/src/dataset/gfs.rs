@@ -31,9 +31,8 @@ impl GfsRegion {
         }
     }
 
-    /// 0.25°グリッド刻みに丸めた、ファイル名安全なキャッシュキー
     pub fn cache_key(&self) -> String {
-        let r = |x: f64| (x / 0.25).round() * 0.25;
+        let r = |x: f64| (x / REGION_CACHE_GRID_DEG).round() * REGION_CACHE_GRID_DEG;
         format!(
             "t{}_b{}_l{}_r{}",
             r(self.top_lat),
@@ -71,6 +70,8 @@ pub fn gfs_filter_url(
 /// 放球点を中心に切り出す領域のマージン（度）
 pub const REGION_MARGIN_DEG: f64 = 10.0;
 
+pub const REGION_CACHE_GRID_DEG: f64 = 4.0;
+
 pub struct GfsForecast {
     /// ダウンロード先URL
     pub url: String,
@@ -87,6 +88,27 @@ pub struct GfsForecastSet {
     pub forecasts: Vec<GfsForecast>,
     /// 最初の予報時刻からの発射オフセット (時間単位)
     pub launch_offset_hours: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cache_key_reuses_small_position_shift() {
+        let base = GfsRegion::around(35.0, 139.0, REGION_MARGIN_DEG);
+        let nearby = GfsRegion::around(35.4, 139.4, REGION_MARGIN_DEG);
+
+        assert_eq!(base.cache_key(), nearby.cache_key());
+    }
+
+    #[test]
+    fn cache_key_changes_after_crossing_cache_grid_boundary() {
+        let base = GfsRegion::around(35.0, 139.0, REGION_MARGIN_DEG);
+        let shifted = GfsRegion::around(35.6, 139.0, REGION_MARGIN_DEG);
+
+        assert_ne!(base.cache_key(), shifted.cache_key());
+    }
 }
 
 /// 発射時刻に基づき、必要なGFS予報のURL一覧を解決する

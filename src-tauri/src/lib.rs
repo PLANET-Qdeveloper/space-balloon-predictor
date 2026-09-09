@@ -1,10 +1,11 @@
-use chrono::{DateTime, Duration, Timelike, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Timelike, Utc};
 use serde::Serialize;
 use std::fs::File;
-use std::io::copy;
+use std::io::{copy, Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 use tauri::{AppHandle, Emitter};
 
 use space_balloon_predictor_rs::dataset::{Dataset, GfsRegion, gfs_filter_url, gefs_filter_url};
@@ -39,6 +40,8 @@ struct TrajectoryPoint {
 
 #[derive(Serialize)]
 struct SimulationResult {
+    model: String,
+    model_run_time_utc: String,
     ascent_path: Vec<TrajectoryPoint>,
     descent_path: Vec<TrajectoryPoint>,
     stratosphere_duration_s: f64,
@@ -66,6 +69,8 @@ struct MonteCarloTrajectory {
 
 #[derive(Serialize)]
 struct MonteCarloResult {
+    model: String,
+    model_run_time_utc: String,
     points: Vec<MonteCarloPoint>,
     mean_landing_lat: f64,
     mean_landing_lon: f64,
@@ -108,9 +113,11 @@ fn stratosphere_duration_s(trajectory: &Trajectory) -> f64 {
 }
 
 const MODEL_CYCLE_HOURS: u32 = 6;
-const MODEL_RUN_AVAILABILITY_LAG_HOURS: i64 = 6;
+const FALLBACK_MODEL_RUN_AVAILABILITY_LAG_HOURS: i64 = 6;
+const MAX_GFS_RUN_BACKTRACKS: usize = 8;
+const GFS_AVAILABILITY_URL: &str = "https://nomads.ncep.noaa.gov/gribfilter.php?ds=gfs_0p25";
 
-/// 指定時刻以前で最も近いGFS/GEFSのモデルサイクルに丸める。
+/// 指定時刻以前で最も近いモデルサイクルに丸める。
 fn floor_model_cycle(time: DateTime<Utc>) -> DateTime<Utc> {
     let cycle_hour = (time.hour() / MODEL_CYCLE_HOURS) * MODEL_CYCLE_HOURS;
     time.date_naive()
@@ -119,10 +126,10 @@ fn floor_model_cycle(time: DateTime<Utc>) -> DateTime<Utc> {
         .and_utc()
 }
 
-/// 実行時点で取得可能とみなせる最新のモデルrunを選ぶ。
+/// NOMADSのavailable一覧を取得できない場合の保守的なフォールバック。
 fn select_model_run_time(now: DateTime<Utc>, launch_time: DateTime<Utc>) -> DateTime<Utc> {
     let latest_completed = floor_model_cycle(
-        now - Duration::hours(MODEL_RUN_AVAILABILITY_LAG_HOURS),
+        now - Duration::hours(FALLBACK_MODEL_RUN_AVAILABILITY_LAG_HOURS),
     );
     let launch_cycle = floor_model_cycle(launch_time);
 
@@ -130,6 +137,150 @@ fn select_model_run_time(now: DateTime<Utc>, launch_time: DateTime<Utc>) -> Date
         launch_cycle
     } else {
         latest_completed
+    }
+}
+
+/// NOMADSのGFSページに掲載されている日付を抽出する。
+fn parse_available_gfs_dates(html: &str) -> Vec<DateTime<Utc>> {
+    let mut dates = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = html[cursor..].find("gfs.") {
+        let date_start = cursor + relative_start + 4;
+        let date_end = date_start + 8;
+        if date_end <= html.len() {
+            let date_text = &html[date_start..date_end];
+            if date_text.bytes().all(|byte| byte.is_ascii_digit()) {
+                if let Ok(date) = NaiveDate::parse_from_str(date_text, "%Y%m%d") {
+                    if let Some(datetime) = date.and_hms_opt(0, 0, 0) {
+                        dates.push(datetime.and_utc());
+                    }
+                }
+            }
+        }
+        cursor = date_start;
+    }
+
+    dates.sort();
+    dates.dedup();
+    dates
+}
+
+fn parse_available_gfs_cycles(html: &str) -> Vec<u32> {
+    let cycle_start = html.find("Cycle").unwrap_or(0);
+    let cycle_end = html[cycle_start..]
+        .find("Subdirectory")
+        .map(|offset| cycle_start + offset)
+        .unwrap_or(html.len());
+    let section = &html[cycle_start..cycle_end];
+
+    let mut cycles = Vec::new();
+    let mut values = extract_quoted_values(section, "click_subdir(1,");
+    values.extend(extract_quoted_values(section, "value="));
+
+    for value in values {
+        if let Ok(cycle) = value.parse::<u32>() {
+            if cycle < 24 && cycle % MODEL_CYCLE_HOURS == 0 {
+                cycles.push(cycle);
+            }
+        }
+    }
+
+    cycles.sort();
+    cycles.dedup();
+    cycles
+}
+
+fn extract_quoted_values(text: &str, marker: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = text[cursor..].find(marker) {
+        let mut value_start = cursor + relative_start + marker.len();
+        while let Some(byte) = text.as_bytes().get(value_start) {
+            if !byte.is_ascii_whitespace() {
+                break;
+            }
+            value_start += 1;
+        }
+
+        let Some(quote) = text[value_start..].chars().next() else {
+            break;
+        };
+        if quote != '\'' && quote != '"' {
+            cursor = value_start;
+            continue;
+        }
+
+        let text_start = value_start + quote.len_utf8();
+        let Some(relative_end) = text[text_start..].find(quote) else {
+            break;
+        };
+        let text_end = text_start + relative_end;
+        values.push(text[text_start..text_end].to_string());
+        cursor = text_end + quote.len_utf8();
+    }
+
+    values
+}
+
+fn available_gfs_runs(html: &str) -> Vec<DateTime<Utc>> {
+    let dates = parse_available_gfs_dates(html);
+    let cycles = parse_available_gfs_cycles(html);
+
+    dates
+        .into_iter()
+        .flat_map(|date| {
+            cycles
+                .iter()
+                .map(move |&cycle| date + Duration::hours(cycle as i64))
+        })
+        .collect()
+}
+
+fn select_available_gfs_run_time(now: DateTime<Utc>, launch_time: DateTime<Utc>) -> DateTime<Utc> {
+    let fallback = select_model_run_time(now, launch_time);
+    let response = reqwest::blocking::Client::builder()
+        .timeout(StdDuration::from_secs(15))
+        .user_agent("space-balloon-predictor")
+        .build()
+        .and_then(|client| client.get(GFS_AVAILABILITY_URL).send())
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.text());
+
+    let html = match response {
+        Ok(html) => html,
+        Err(error) => {
+            eprintln!(
+                "Could not query GFS availability from NOMADS: {}. Falling back to the conservative run selection.",
+                error
+            );
+            return fallback;
+        }
+    };
+
+    let latest_allowed = floor_model_cycle(if launch_time < now { launch_time } else { now });
+    let selected = available_gfs_runs(&html)
+        .into_iter()
+        .filter(|run| *run <= latest_allowed)
+        .max();
+
+    match selected {
+        Some(run) => {
+            println!(
+                "NOMADS reports latest usable GFS model run {} for launch {}",
+                run.to_rfc3339(),
+                launch_time.to_rfc3339()
+            );
+            run
+        }
+        None => {
+            eprintln!(
+                "Could not find a usable GFS run in the NOMADS availability page. Falling back to {}.",
+                fallback.to_rfc3339()
+            );
+            fallback
+        }
     }
 }
 
@@ -162,6 +313,43 @@ mod model_run_tests {
             utc("2026-09-09T00:00:00Z")
         );
     }
+
+    #[test]
+    fn parses_available_gfs_dates_and_cycles() {
+        let html = r#"
+            <span onClick="click_subdir(0, 'gfs.20260909', this)">gfs.20260909</span>
+            <span onClick="click_subdir(0, 'gfs.20260908', this)">gfs.20260908</span>
+            <h2>Cycle:</h2>
+            <span onClick="click_subdir(1, '18', this)">18</span>
+            <span onClick="click_subdir(1, '12', this)">12</span>
+            <span onClick="click_subdir(1, '06', this)">06</span>
+            <span onClick="click_subdir(1, '00', this)">00</span>
+            <h2>Subdirectory:</h2>
+        "#;
+
+        assert_eq!(
+            parse_available_gfs_dates(html),
+            vec![utc("2026-09-08T00:00:00Z"), utc("2026-09-09T00:00:00Z")]
+        );
+        assert_eq!(parse_available_gfs_cycles(html), vec![0, 6, 12, 18]);
+    }
+}
+
+fn is_valid_grib_cache_file(path: &Path) -> bool {
+    let metadata = match path.metadata() {
+        Ok(metadata) => metadata,
+        Err(_) => return false,
+    };
+    if metadata.len() < 4 {
+        return false;
+    }
+
+    let mut file = match File::open(path) {
+        Ok(file) => file,
+        Err(_) => return false,
+    };
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic).is_ok() && magic == *b"GRIB"
 }
 
 fn download_gfs_file(
@@ -179,12 +367,18 @@ fn download_gfs_file(
         region.cache_key()
     ));
 
-    if local_path.exists() {
+    if local_path.exists() && is_valid_grib_cache_file(&local_path) {
         println!(
             "  File '{}' already exists locally. Skipping download.",
             local_path.display()
         );
         return Ok(local_path.to_string_lossy().into_owned());
+    }
+    if local_path.exists() {
+        println!(
+            "  Cached file '{}' is not a valid GRIB file. Refreshing it.",
+            local_path.display()
+        );
     }
 
     let url = gfs_filter_url(date_str, cycle_str, forecast_hour, region);
@@ -199,7 +393,28 @@ fn download_gfs_file(
         ));
     }
 
+    let mut magic = [0u8; 4];
+    response
+        .read_exact(&mut magic)
+        .map_err(|e| format!("Failed to read GFS response: {}", e))?;
+    if magic != *b"GRIB" {
+        let mut preview = [0u8; 4092];
+        let preview_len = response.read(&mut preview).unwrap_or(0);
+        let mut response_preview = String::from_utf8_lossy(&magic).to_string();
+        response_preview.push_str(&String::from_utf8_lossy(&preview[..preview_len]));
+        let detail = response_preview
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("NOMADS returned a non-GRIB response")
+            .trim();
+        return Err(format!(
+            "GFS forecast f{:03} is not available: {}",
+            forecast_hour, detail
+        ));
+    }
+
     let mut dest = File::create(&local_path).map_err(|e| e.to_string())?;
+    dest.write_all(&magic).map_err(|e| e.to_string())?;
     copy(&mut response, &mut dest).map_err(|e| e.to_string())?;
     println!("  Saved successfully to '{}'.", local_path.display());
 
@@ -213,8 +428,64 @@ fn download_gfs_series(
     launch_time: DateTime<Utc>,
     launch_lat: f64,
     launch_lon: f64,
+) -> Result<(DateTime<Utc>, Vec<String>), String> {
+    let initial_run_time = floor_model_cycle(gfs_run_time);
+    let mut candidate_run_time = initial_run_time;
+    let mut last_error = None;
+
+    for attempt in 0..=MAX_GFS_RUN_BACKTRACKS {
+        match download_gfs_series_for_run(
+            app,
+            work_dir,
+            candidate_run_time,
+            launch_time,
+            launch_lat,
+            launch_lon,
+        ) {
+            Ok(paths) => {
+                if candidate_run_time != initial_run_time {
+                    println!(
+                        "GFS run {} was not usable; using previous available run {}",
+                        initial_run_time.to_rfc3339(),
+                        candidate_run_time.to_rfc3339()
+                    );
+                }
+                return Ok((candidate_run_time, paths));
+            }
+            Err(error) => {
+                println!(
+                    "GFS run {} is not usable: {}",
+                    candidate_run_time.to_rfc3339(),
+                    error
+                );
+                last_error = Some(error);
+            }
+        }
+
+        if attempt < MAX_GFS_RUN_BACKTRACKS {
+            candidate_run_time -= Duration::hours(MODEL_CYCLE_HOURS as i64);
+            println!(
+                "Trying previous GFS run {}...",
+                candidate_run_time.to_rfc3339()
+            );
+        }
+    }
+
+    Err(format!(
+        "Could not find a usable GFS run after checking up to {} previous cycles. Last error: {}",
+        MAX_GFS_RUN_BACKTRACKS,
+        last_error.unwrap_or_else(|| "unknown download error".to_string())
+    ))
+}
+
+fn download_gfs_series_for_run(
+    app: &AppHandle,
+    work_dir: &Path,
+    rounded_gfs_time: DateTime<Utc>,
+    launch_time: DateTime<Utc>,
+    launch_lat: f64,
+    launch_lon: f64,
 ) -> Result<Vec<String>, String> {
-    let rounded_gfs_time = floor_model_cycle(gfs_run_time);
 
     let total_diff_seconds = launch_time
         .signed_duration_since(rounded_gfs_time)
@@ -397,7 +668,12 @@ fn download_gefs_member_series(
     Ok(paths)
 }
 
-fn trajectory_to_result(trajectory: &Trajectory, launch_site: Geodetic) -> SimulationResult {
+fn trajectory_to_result(
+    trajectory: &Trajectory,
+    launch_site: Geodetic,
+    model: &str,
+    model_run_time_utc: &str,
+) -> SimulationResult {
     let burst_idx = trajectory
         .states
         .iter()
@@ -451,6 +727,8 @@ fn trajectory_to_result(trajectory: &Trajectory, launch_site: Geodetic) -> Simul
         };
 
     SimulationResult {
+        model: model.to_string(),
+        model_run_time_utc: model_run_time_utc.to_string(),
         ascent_path,
         descent_path,
         stratosphere_duration_s: stratosphere_duration,
@@ -502,12 +780,6 @@ async fn run_simulation(
     burst_altitude: f64,
 ) -> Result<SimulationResult, String> {
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
-    let gfs_run = select_model_run_time(Utc::now(), launch);
-    println!(
-        "Using GFS model run {} for launch {}",
-        gfs_run.to_rfc3339(),
-        launch.to_rfc3339()
-    );
     let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
 
     let launch_site = Geodetic {
@@ -517,10 +789,17 @@ async fn run_simulation(
     };
 
     tokio::task::spawn_blocking(move || -> Result<SimulationResult, String> {
+        let gfs_run = select_available_gfs_run_time(Utc::now(), launch);
         let work_dir = Path::new(".").to_path_buf();
 
-        let file_paths =
+        let (gfs_run, file_paths) =
             download_gfs_series(&app, &work_dir, gfs_run, launch, launch_lat, launch_lon)?;
+        println!(
+            "Using GFS model run {} for launch {}",
+            gfs_run.to_rfc3339(),
+            launch.to_rfc3339()
+        );
+        let model_run_time_utc = gfs_run.to_rfc3339();
 
         let _ = app.emit("progress", ProgressEvent::DecodingGrib);
 
@@ -546,7 +825,12 @@ async fn run_simulation(
         let simulator = Simulator::new(config, dataset, launch);
         let trajectory = simulator.run();
 
-        Ok(trajectory_to_result(&trajectory, launch_site))
+        Ok(trajectory_to_result(
+            &trajectory,
+            launch_site,
+            "GFS",
+            &model_run_time_utc,
+        ))
     })
     .await
     .map_err(|e| format!("Task failed: {}", e))?
@@ -568,12 +852,6 @@ async fn run_monte_carlo(
     num_samples: u32,
 ) -> Result<MonteCarloResult, String> {
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
-    let gfs_run = select_model_run_time(Utc::now(), launch);
-    println!(
-        "Using GFS model run {} for Monte Carlo launch {}",
-        gfs_run.to_rfc3339(),
-        launch.to_rfc3339()
-    );
     let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
 
     let launch_site = Geodetic {
@@ -583,10 +861,17 @@ async fn run_monte_carlo(
     };
 
     tokio::task::spawn_blocking(move || -> Result<MonteCarloResult, String> {
+        let gfs_run = select_available_gfs_run_time(Utc::now(), launch);
         let work_dir = Path::new(".").to_path_buf();
 
-        let file_paths =
+        let (gfs_run, file_paths) =
             download_gfs_series(&app, &work_dir, gfs_run, launch, launch_lat, launch_lon)?;
+        println!(
+            "Using GFS model run {} for Monte Carlo launch {}",
+            gfs_run.to_rfc3339(),
+            launch.to_rfc3339()
+        );
+        let model_run_time_utc = gfs_run.to_rfc3339();
 
         let _ = app.emit("progress", ProgressEvent::DecodingGrib);
 
@@ -646,7 +931,12 @@ async fn run_monte_carlo(
 
                 let simulator = Simulator::new(config, dataset.clone(), launch);
                 let trajectory = simulator.run();
-                let result = trajectory_to_result(&trajectory, launch_site);
+                let result = trajectory_to_result(
+                    &trajectory,
+                    launch_site,
+                    "GFS",
+                    &model_run_time_utc,
+                );
 
                 let mc_point = MonteCarloPoint {
                     landing_lat: result.landing_lat,
@@ -686,10 +976,17 @@ async fn run_monte_carlo(
         };
         let mean_sim = Simulator::new(mean_config, dataset, launch);
         let mean_trajectory = mean_sim.run();
-        let mean_result = trajectory_to_result(&mean_trajectory, launch_site);
+        let mean_result = trajectory_to_result(
+            &mean_trajectory,
+            launch_site,
+            "GFS",
+            &model_run_time_utc,
+        );
 
         let n = sample_count as f64;
         Ok(MonteCarloResult {
+            model: "GFS".to_string(),
+            model_run_time_utc,
             points,
             mean_landing_lat: if use_scatter { sum_lat / n } else { mean_result.landing_lat },
             mean_landing_lon: if use_scatter { sum_lon / n } else { mean_result.landing_lon },
@@ -735,6 +1032,7 @@ async fn run_gefs_simulation(
 
     tokio::task::spawn_blocking(move || -> Result<MonteCarloResult, String> {
         let work_dir = Path::new(".").to_path_buf();
+        let model_run_time_utc = gefs_run.to_rfc3339();
 
         let num = num_members.min(31);
         let mut members_to_run = Vec::new();
@@ -830,7 +1128,12 @@ async fn run_gefs_simulation(
 
                     let simulator = Simulator::new(config, dataset.clone(), launch);
                     let trajectory = simulator.run();
-                    let result = trajectory_to_result(&trajectory, launch_site);
+                    let result = trajectory_to_result(
+                        &trajectory,
+                        launch_site,
+                        "GEFS",
+                        &model_run_time_utc,
+                    );
 
                     let mc_point = MonteCarloPoint {
                         landing_lat: result.landing_lat,
@@ -867,7 +1170,12 @@ async fn run_gefs_simulation(
                         dt: 5.0,
                     };
                     let mean_sim = Simulator::new(mean_config, dataset.clone(), launch);
-                    let mean_result = trajectory_to_result(&mean_sim.run(), launch_site);
+                    let mean_result = trajectory_to_result(
+                        &mean_sim.run(),
+                        launch_site,
+                        "GEFS",
+                        &model_run_time_utc,
+                    );
                     mean_ascent_path = Some(mean_result.ascent_path);
                     mean_descent_path = Some(mean_result.descent_path);
                 } else {
@@ -885,6 +1193,8 @@ async fn run_gefs_simulation(
         let mean_lon = points.iter().map(|p| p.landing_lon).sum::<f64>() / n;
 
         Ok(MonteCarloResult {
+            model: "GEFS".to_string(),
+            model_run_time_utc,
             points,
             mean_landing_lat: mean_lat,
             mean_landing_lon: mean_lon,
