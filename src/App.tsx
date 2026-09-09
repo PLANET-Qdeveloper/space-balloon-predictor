@@ -46,16 +46,11 @@ function App() {
       )
       setLaunchTimeUtc(launchDateTime.toISOString())
 
-      const gfsRunTime = new Date(
-        launchDateTime.getTime() - 12 * 60 * 60 * 1000,
-      )
-
       if (values.weatherSource === "gefs") {
         const result = await invoke<MonteCarloResult>("run_gefs_simulation", {
           launchLat: values.launchLat,
           launchLon: values.launchLon,
           launchAlt: 10.0,
-          gefsRunTime: gfsRunTime.toISOString(),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
           grossMassKg: Number(values.totalWeight) / 1000,
@@ -73,7 +68,6 @@ function App() {
           launchLat: values.launchLat,
           launchLon: values.launchLon,
           launchAlt: 10.0,
-          gfsRunTime: gfsRunTime.toISOString(),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
           grossMassKg: Number(values.totalWeight) / 1000,
@@ -90,7 +84,6 @@ function App() {
           launchLat: values.launchLat,
           launchLon: values.launchLon,
           launchAlt: 10.0,
-          gfsRunTime: gfsRunTime.toISOString(),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
           grossMassKg: Number(values.totalWeight) / 1000,

@@ -1,4 +1,4 @@
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Duration, Timelike, Utc};
 use serde::Serialize;
 use std::fs::File;
 use std::io::copy;
@@ -107,6 +107,63 @@ fn stratosphere_duration_s(trajectory: &Trajectory) -> f64 {
     total
 }
 
+const MODEL_CYCLE_HOURS: u32 = 6;
+const MODEL_RUN_AVAILABILITY_LAG_HOURS: i64 = 6;
+
+/// 指定時刻以前で最も近いGFS/GEFSのモデルサイクルに丸める。
+fn floor_model_cycle(time: DateTime<Utc>) -> DateTime<Utc> {
+    let cycle_hour = (time.hour() / MODEL_CYCLE_HOURS) * MODEL_CYCLE_HOURS;
+    time.date_naive()
+        .and_hms_opt(cycle_hour, 0, 0)
+        .expect("model cycle hour must be valid")
+        .and_utc()
+}
+
+/// 実行時点で取得可能とみなせる最新のモデルrunを選ぶ。
+fn select_model_run_time(now: DateTime<Utc>, launch_time: DateTime<Utc>) -> DateTime<Utc> {
+    let latest_completed = floor_model_cycle(
+        now - Duration::hours(MODEL_RUN_AVAILABILITY_LAG_HOURS),
+    );
+    let launch_cycle = floor_model_cycle(launch_time);
+
+    if launch_cycle < latest_completed {
+        launch_cycle
+    } else {
+        latest_completed
+    }
+}
+
+#[cfg(test)]
+mod model_run_tests {
+    use super::*;
+
+    fn utc(value: &str) -> DateTime<Utc> {
+        value.parse().expect("valid UTC timestamp")
+    }
+
+    #[test]
+    fn future_launch_uses_a_run_that_already_exists() {
+        let now = utc("2026-09-09T05:00:00Z");
+        let launch = utc("2026-09-16T04:00:00Z");
+
+        assert_eq!(
+            select_model_run_time(now, launch),
+            utc("2026-09-08T18:00:00Z")
+        );
+    }
+
+    #[test]
+    fn past_launch_does_not_use_a_run_after_launch() {
+        let now = utc("2026-09-09T14:00:00Z");
+        let launch = utc("2026-09-09T04:00:00Z");
+
+        assert_eq!(
+            select_model_run_time(now, launch),
+            utc("2026-09-09T00:00:00Z")
+        );
+    }
+}
+
 fn download_gfs_file(
     work_dir: &Path,
     date_str: &str,
@@ -157,12 +214,7 @@ fn download_gfs_series(
     launch_lat: f64,
     launch_lon: f64,
 ) -> Result<Vec<String>, String> {
-    let cycle_hour = (gfs_run_time.hour() / 6) * 6;
-    let rounded_gfs_time = gfs_run_time
-        .date_naive()
-        .and_hms_opt(cycle_hour, 0, 0)
-        .unwrap()
-        .and_utc();
+    let rounded_gfs_time = floor_model_cycle(gfs_run_time);
 
     let total_diff_seconds = launch_time
         .signed_duration_since(rounded_gfs_time)
@@ -174,7 +226,15 @@ fn download_gfs_series(
     }
 
     let diff_hours = total_diff_seconds as f64 / 3600.0;
-    let forecast_hour_low = ((diff_hours / 3.0).floor() as u32) * 3;
+    if diff_hours > 384.0 {
+        return Err(format!(
+            "Launch time is {:.1} hours after the GFS run; GFS forecasts are available for up to 384 hours.",
+            diff_hours
+        ));
+    }
+
+    // f384が最終時刻なので、終端付近でも3本の時刻を取得できるようにする。
+    let forecast_hour_low = (((diff_hours / 3.0).floor() as u32) * 3).min(378);
     let launch_offset_hours = diff_hours - (forecast_hour_low as f64);
 
     let date_str = rounded_gfs_time.format("%Y%m%d").to_string();
@@ -286,12 +346,7 @@ fn download_gefs_member_series(
     launch_lon: f64,
     member: GefsMember,
 ) -> Result<Vec<String>, String> {
-    let cycle_hour = (gefs_run_time.hour() / 6) * 6;
-    let rounded_time = gefs_run_time
-        .date_naive()
-        .and_hms_opt(cycle_hour, 0, 0)
-        .unwrap()
-        .and_utc();
+    let rounded_time = floor_model_cycle(gefs_run_time);
 
     let total_diff_seconds = launch_time
         .signed_duration_since(rounded_time)
@@ -439,7 +494,6 @@ async fn run_simulation(
     launch_lat: f64,
     launch_lon: f64,
     launch_alt: f64,
-    gfs_run_time: String,
     launch_time: String,
     ascent_rate: f64,
     gross_mass_kg: f64,
@@ -447,8 +501,13 @@ async fn run_simulation(
     descent_rate: f64,
     burst_altitude: f64,
 ) -> Result<SimulationResult, String> {
-    let gfs_run: DateTime<Utc> = gfs_run_time.parse().map_err(|e| format!("Invalid gfs_run_time: {}", e))?;
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let gfs_run = select_model_run_time(Utc::now(), launch);
+    println!(
+        "Using GFS model run {} for launch {}",
+        gfs_run.to_rfc3339(),
+        launch.to_rfc3339()
+    );
     let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
 
     let launch_site = Geodetic {
@@ -499,7 +558,6 @@ async fn run_monte_carlo(
     launch_lat: f64,
     launch_lon: f64,
     launch_alt: f64,
-    gfs_run_time: String,
     launch_time: String,
     ascent_rate: f64,
     gross_mass_kg: f64,
@@ -509,8 +567,13 @@ async fn run_monte_carlo(
     burst_altitude_std: f64,
     num_samples: u32,
 ) -> Result<MonteCarloResult, String> {
-    let gfs_run: DateTime<Utc> = gfs_run_time.parse().map_err(|e| format!("Invalid gfs_run_time: {}", e))?;
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let gfs_run = select_model_run_time(Utc::now(), launch);
+    println!(
+        "Using GFS model run {} for Monte Carlo launch {}",
+        gfs_run.to_rfc3339(),
+        launch.to_rfc3339()
+    );
     let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
 
     let launch_site = Geodetic {
@@ -645,7 +708,6 @@ async fn run_gefs_simulation(
     launch_lat: f64,
     launch_lon: f64,
     launch_alt: f64,
-    gefs_run_time: String,
     launch_time: String,
     ascent_rate: f64,
     gross_mass_kg: f64,
@@ -656,8 +718,13 @@ async fn run_gefs_simulation(
     num_members: u32,
     num_samples: u32,
 ) -> Result<MonteCarloResult, String> {
-    let gefs_run: DateTime<Utc> = gefs_run_time.parse().map_err(|e| format!("Invalid gefs_run_time: {}", e))?;
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let gefs_run = select_model_run_time(Utc::now(), launch);
+    println!(
+        "Using GEFS model run {} for launch {}",
+        gefs_run.to_rfc3339(),
+        launch.to_rfc3339()
+    );
     let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
 
     let launch_site = Geodetic {
