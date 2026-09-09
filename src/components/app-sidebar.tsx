@@ -60,14 +60,14 @@ interface AppSidebarProps {
 }
 
 export const PRESETS = [
-  { name: "伊都キャンパス", lat: 33.5969, lon: 130.2236 },
   { name: "南レク南楽園ファミリーパーク", lat: 33.13492, lon: 132.50477 },
   { name: "津島プレーランド", lat: 33.12604, lon: 132.50333 },
-  { name: "須ノ川公園キャンプ場", lat: 33.04107, lon: 132.48698 },
+  { name: "グリーンパークすのかわ", lat: 33.04423, lon: 132.48829 },
   { name: "南レク松軒山公園", lat: 32.97239, lon: 132.55583 },
   { name: "南レク御荘公園", lat: 32.96417, lon: 132.55206 },
   { name: "南レク城辺公園", lat: 32.95287, lon: 132.58429 },
   { name: "土佐西南大規模公園", lat: 33.02483, lon: 133.01651 },
+  { name: "大月町総合グラウンド", lat: 32.83420, lon: 132.71167 },
 ] as const
 
 const DEFAULT_LAT = PRESETS[0].lat
