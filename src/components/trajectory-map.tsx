@@ -41,6 +41,8 @@ function tinyCirclePath(
 interface TrajectoryMapProps {
   predictionData: PredictionData | null
   monteCarloData?: MonteCarloResult | null
+  ascentRate?: number
+  descentRate?: number
   selectedPointIndex?: number | null
   onPointSelect?: (index: number | null) => void
   launchLat?: number
@@ -127,6 +129,8 @@ function MapController({
 export function TrajectoryMap({
   predictionData,
   monteCarloData = null,
+  ascentRate,
+  descentRate,
   selectedPointIndex = null,
   onPointSelect,
   launchLat,
@@ -623,27 +627,52 @@ export function TrajectoryMap({
         )}
       </Map>
 
-      {monteCarloData && monteCarloData.points.length > 0 && (
+      {monteCarloData &&
+        monteCarloData.points.length > 0 &&
+        (useSigmaColors || containments !== null) && (
         <div className="absolute top-4 right-4 z-10 bg-sidebar/95 text-sidebar-foreground rounded-lg p-3 text-xs space-y-1.5 shadow-sm ring-1 ring-sidebar-border">
-          <p className="font-medium text-[11px] mb-1">偏差 (σ)</p>
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-[rgb(34,197,94)]" />
-            <span>±1σ 以内</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-[rgb(234,179,8)]" />
-            <span>±1σ〜2σ</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-3 h-3 rounded-full bg-[rgb(239,68,68)]" />
-            <span>±2σ 超</span>
-          </div>
+          <p className="font-medium text-[11px] mb-1">
+            {useSigmaColors ? "バースト高度の平均との差" : "確率"}
+          </p>
+          {useSigmaColors ? (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[rgb(34,197,94)]" />
+                <span>±1σ以内</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[rgb(234,179,8)]" />
+                <span>±1〜2σ</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[rgb(239,68,68)]" />
+                <span>±2σ超</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[rgb(34,197,94)]" />
+                <span>68%以内</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[rgb(234,179,8)]" />
+                <span>68〜95%</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-3 h-3 rounded-full bg-[rgb(239,68,68)]" />
+                <span>95%超</span>
+              </div>
+            </>
+          )}
         </div>
       )}
 
       <TrajectorySummary
         predictionData={predictionData}
         monteCarloData={monteCarloData}
+        ascentRate={ascentRate}
+        descentRate={descentRate}
         selectedPointIndex={selectedPointIndex}
         launchLat={launchLat}
         launchLon={launchLon}

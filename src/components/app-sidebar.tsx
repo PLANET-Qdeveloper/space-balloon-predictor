@@ -6,7 +6,7 @@ import {
   SidebarHeader,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { Balloon, CalendarDays, ChevronsDown, ChevronsUp, Clock, Crosshair, Dice5, Layers, Loader, MapPin, Pencil, Play, Sigma, Weight } from "lucide-react"
+import { Balloon, CalendarDays, ChevronsDown, ChevronsUp, Clock, Crosshair, Dice5, Layers, Loader, MapPin, Pencil, Play, Weight } from "lucide-react"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group"
 import {
   Field,
@@ -27,12 +27,15 @@ export type WeatherSource = "gfs" | "gefs"
 export interface PredictorFormValues {
   launchLat: number
   launchLon: number
+  launchAltitude: string
   launchDate: Date | undefined
   launchTime: string
   balloonClass: string
   totalWeight: string
   ascentRate: string
+  ascentRateStd: string
   descentRate: string
+  descentRateStd: string
   burstAltitude: string
   monteCarloEnabled: boolean
   burstAltitudeStd: string
@@ -83,8 +86,16 @@ const validateTime24h = (value: string) => {
 const validatePositiveNumber = (value: string, label: string) => {
   if (!value) return `${label}を入力してください`
   const num = Number(value)
-  if (isNaN(num)) return "数値で入力してください"
+  if (!Number.isFinite(num)) return "数値で入力してください"
   if (num <= 0) return "0より大きい数値を入力してください"
+  return undefined
+}
+
+const validateNonNegativeNumber = (value: string, label: string) => {
+  if (!value) return `${label}を入力してください`
+  const num = Number(value)
+  if (!Number.isFinite(num)) return "数値で入力してください"
+  if (num < 0) return "0以上の数値を入力してください"
   return undefined
 }
 
@@ -125,12 +136,15 @@ export function AppSidebar({
   const defaultValues: PredictorFormValues = {
     launchLat: launchLat ?? DEFAULT_LAT,
     launchLon: launchLon ?? DEFAULT_LON,
+    launchAltitude: "10",
     launchDate: undefined,
     launchTime: "",
     balloonClass: "2000",
     totalWeight: "6000",
     ascentRate: "6",
+    ascentRateStd: "0",
     descentRate: "6",
+    descentRateStd: "0",
     burstAltitude: "30000",
     monteCarloEnabled: false,
     burstAltitudeStd: "1000",
@@ -186,39 +200,6 @@ export function AppSidebar({
 
   const scatterFields = (
     <>
-      {/* 標準偏差 */}
-      <form.Field
-        name="burstAltitudeStd"
-        validators={{
-          onChange: ({ value }) => validatePositiveNumber(value, "標準偏差"),
-        }}
-        children={(field) => (
-          <Field>
-            <FieldLabel className="text-xs" htmlFor={field.name}>バースト高度の標準偏差</FieldLabel>
-            <InputGroup>
-              <InputGroupInput
-                id={field.name}
-                name={field.name}
-                value={field.state.value}
-                onBlur={field.handleBlur}
-                onChange={(e) => field.handleChange(e.target.value)}
-                type="text"
-                placeholder="標準偏差を入力"
-              />
-              <InputGroupAddon align="inline-start">
-                <Sigma className="text-muted-foreground" />
-              </InputGroupAddon>
-              <InputGroupAddon align="inline-end">
-                <InputGroupText className="text-muted-foreground">m</InputGroupText>
-              </InputGroupAddon>
-            </InputGroup>
-            {field.state.meta.isTouched && field.state.meta.errors.length ? (
-              <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
-            ) : null}
-          </Field>
-        )}
-      />
-
       {/* サンプル数 */}
       <form.Field
         name="numSamples"
@@ -499,6 +480,36 @@ export function AppSidebar({
               />
             </FieldGroup>
 
+            {/* 初期高度 */}
+            <form.Field
+              name="launchAltitude"
+              validators={{
+                onChange: ({ value }) => validateNonNegativeNumber(value, "初期高度"),
+              }}
+              children={(field) => (
+                <Field>
+                  <FieldLabel className="text-xs" htmlFor={field.name}>初期高度</FieldLabel>
+                  <InputGroup>
+                    <InputGroupInput
+                      id={field.name}
+                      name={field.name}
+                      value={field.state.value}
+                      onBlur={field.handleBlur}
+                      onChange={(e) => field.handleChange(e.target.value)}
+                      type="text"
+                      placeholder="高度を入力"
+                    />
+                    <InputGroupAddon align="inline-end">
+                      <InputGroupText className="text-muted-foreground">m</InputGroupText>
+                    </InputGroupAddon>
+                  </InputGroup>
+                  {field.state.meta.isTouched && field.state.meta.errors.length ? (
+                    <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+                  ) : null}
+                </Field>
+              )}
+            />
+
             <FieldGroup className="flex flex-col gap-y-2">
               {/* 気球種別 */}
               <form.Field
@@ -567,105 +578,206 @@ export function AppSidebar({
               />
             </FieldGroup>
 
-            <FieldGroup className="flex flex-col gap-y-2">
-              {/* 上昇速度 */}
-              <form.Field
-                name="ascentRate"
-                validators={{
-                  onChange: ({ value }) => validatePositiveNumber(value, "目標上昇速度"),
-                }}
-                children={(field) => (
-                  <Field className="flex-1">
-                    <FieldLabel className="text-xs" htmlFor={field.name}>目標上昇速度</FieldLabel>
-                    <InputGroup>
-                      <InputGroupInput
-                        id={field.name}
-                        name={field.name}
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                        type="text"
-                        placeholder="上昇速度"
-                      />
-                      <InputGroupAddon align="inline-start">
-                        <ChevronsUp className="text-muted-foreground" />
-                      </InputGroupAddon>
-                      <InputGroupAddon align="inline-end">
-                        <InputGroupText className="text-muted-foreground">m/s</InputGroupText>
-                      </InputGroupAddon>
-                    </InputGroup>
-                    {field.state.meta.isTouched && field.state.meta.errors.length ? (
-                      <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
-                    ) : null}
-                  </Field>
-                )}
-              />
+            <form.Subscribe
+              selector={(state) => [state.values.monteCarloEnabled, state.values.weatherSource]}
+              children={([monteCarloEnabled, weatherSource]) => {
+                const uncertaintyEnabled = monteCarloEnabled || weatherSource === "gefs"
 
-              {/* 落下速度 */}
-              <form.Field
-                name="descentRate"
-                validators={{
-                  onChange: ({ value }) => validatePositiveNumber(value, "落下速度"),
-                }}
-                children={(field) => (
-                  <Field className="flex-1">
-                    <FieldLabel className="text-xs" htmlFor={field.name}>落下速度</FieldLabel>
-                    <InputGroup>
-                      <InputGroupInput
-                        id={field.name}
-                        name={field.name}
-                        value={field.state.value}
-                        onBlur={field.handleBlur}
-                        onChange={(e) => field.handleChange(e.target.value)}
-                        type="text"
-                        placeholder="落下速度"
+                return (
+                  <>
+                    <FieldGroup className="flex flex-col gap-y-2">
+                      {/* 上昇速度 */}
+                      <form.Field
+                        name="ascentRateStd"
+                        validators={{
+                          onChange: ({ value }) => validateNonNegativeNumber(value, "上昇速度の標準偏差"),
+                        }}
+                        children={(stdField) => (
+                          <form.Field
+                            name="ascentRate"
+                            validators={{
+                              onChange: ({ value }) => validatePositiveNumber(value, "目標上昇速度"),
+                            }}
+                            children={(field) => (
+                              <Field className="flex-1">
+                                <FieldLabel className="text-xs" htmlFor={field.name}>目標上昇速度</FieldLabel>
+                                <InputGroup>
+                                  <InputGroupInput
+                                    id={field.name}
+                                    name={field.name}
+                                    value={field.state.value}
+                                    onBlur={field.handleBlur}
+                                    onChange={(e) => field.handleChange(e.target.value)}
+                                    type="text"
+                                    placeholder="上昇速度"
+                                  />
+                                  <InputGroupAddon align="inline-start">
+                                    <ChevronsUp className="text-muted-foreground" />
+                                  </InputGroupAddon>
+                                  <InputGroupAddon
+                                    align="inline-end"
+                                    className="gap-1 py-0 pr-1"
+                                    aria-invalid={uncertaintyEnabled && stdField.state.meta.errors.length > 0}
+                                  >
+                                    {uncertaintyEnabled && (
+                                      <>
+                                        <InputGroupText className="text-xs" aria-hidden="true">σ</InputGroupText>
+                                        <InputGroupInput
+                                          id={stdField.name}
+                                          name={stdField.name}
+                                          aria-label="上昇速度の標準偏差"
+                                          value={stdField.state.value}
+                                          onBlur={stdField.handleBlur}
+                                          onChange={(e) => stdField.handleChange(e.target.value)}
+                                          type="text"
+                                          className="w-9 flex-none px-0 text-right"
+                                        />
+                                      </>
+                                    )}
+                                    <InputGroupText className="text-muted-foreground">m/s</InputGroupText>
+                                  </InputGroupAddon>
+                                </InputGroup>
+                                {field.state.meta.isTouched && field.state.meta.errors.length ? (
+                                  <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+                                ) : null}
+                                {uncertaintyEnabled && stdField.state.meta.isTouched && stdField.state.meta.errors.length ? (
+                                  <p className="text-[11px] text-red-500 mt-1">{stdField.state.meta.errors.join(", ")}</p>
+                                ) : null}
+                              </Field>
+                            )}
+                          />
+                        )}
                       />
-                      <InputGroupAddon align="inline-start">
-                        <ChevronsDown className="text-muted-foreground" />
-                      </InputGroupAddon>
-                      <InputGroupAddon align="inline-end">
-                        <InputGroupText className="text-muted-foreground">m/s</InputGroupText>
-                      </InputGroupAddon>
-                    </InputGroup>
-                    {field.state.meta.isTouched && field.state.meta.errors.length ? (
-                      <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
-                    ) : null}
-                  </Field>
-                )}
-              />
-            </FieldGroup>
 
-            {/* バースト高度 */}
-            <form.Field
-              name="burstAltitude"
-              validators={{
-                onChange: ({ value }) => validatePositiveNumber(value, "バースト高度"),
-              }}
-              children={(field) => (
-                <Field>
-                  <FieldLabel className="text-xs" htmlFor={field.name}>バースト高度</FieldLabel>
-                  <InputGroup>
-                    <InputGroupInput
-                      id={field.name}
-                      name={field.name}
-                      value={field.state.value}
-                      onBlur={field.handleBlur}
-                      onChange={(e) => field.handleChange(e.target.value)}
-                      type="text"
-                      placeholder="高度を入力"
+                      {/* 落下速度 */}
+                      <form.Field
+                        name="descentRateStd"
+                        validators={{
+                          onChange: ({ value }) => validateNonNegativeNumber(value, "落下速度の標準偏差"),
+                        }}
+                        children={(stdField) => (
+                          <form.Field
+                            name="descentRate"
+                            validators={{
+                              onChange: ({ value }) => validatePositiveNumber(value, "落下速度"),
+                            }}
+                            children={(field) => (
+                              <Field className="flex-1">
+                                <FieldLabel className="text-xs" htmlFor={field.name}>落下速度</FieldLabel>
+                                <InputGroup>
+                                  <InputGroupInput
+                                    id={field.name}
+                                    name={field.name}
+                                    value={field.state.value}
+                                    onBlur={field.handleBlur}
+                                    onChange={(e) => field.handleChange(e.target.value)}
+                                    type="text"
+                                    placeholder="落下速度"
+                                  />
+                                  <InputGroupAddon align="inline-start">
+                                    <ChevronsDown className="text-muted-foreground" />
+                                  </InputGroupAddon>
+                                  <InputGroupAddon
+                                    align="inline-end"
+                                    className="gap-1 py-0 pr-1"
+                                    aria-invalid={uncertaintyEnabled && stdField.state.meta.errors.length > 0}
+                                  >
+                                    {uncertaintyEnabled && (
+                                      <>
+                                        <InputGroupText className="text-xs" aria-hidden="true">σ</InputGroupText>
+                                        <InputGroupInput
+                                          id={stdField.name}
+                                          name={stdField.name}
+                                          aria-label="落下速度の標準偏差"
+                                          value={stdField.state.value}
+                                          onBlur={stdField.handleBlur}
+                                          onChange={(e) => stdField.handleChange(e.target.value)}
+                                          type="text"
+                                          className="w-9 flex-none px-0 text-right"
+                                        />
+                                      </>
+                                    )}
+                                    <InputGroupText className="text-muted-foreground">m/s</InputGroupText>
+                                  </InputGroupAddon>
+                                </InputGroup>
+                                {field.state.meta.isTouched && field.state.meta.errors.length ? (
+                                  <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+                                ) : null}
+                                {uncertaintyEnabled && stdField.state.meta.isTouched && stdField.state.meta.errors.length ? (
+                                  <p className="text-[11px] text-red-500 mt-1">{stdField.state.meta.errors.join(", ")}</p>
+                                ) : null}
+                              </Field>
+                            )}
+                          />
+                        )}
+                      />
+                    </FieldGroup>
+
+                    {/* バースト高度 */}
+                    <form.Field
+                      name="burstAltitudeStd"
+                      validators={{
+                        onChange: ({ value }) => validateNonNegativeNumber(value, "バースト高度の標準偏差"),
+                      }}
+                      children={(stdField) => (
+                        <form.Field
+                          name="burstAltitude"
+                          validators={{
+                            onChange: ({ value }) => validatePositiveNumber(value, "バースト高度"),
+                          }}
+                          children={(field) => (
+                            <Field>
+                              <FieldLabel className="text-xs" htmlFor={field.name}>バースト高度</FieldLabel>
+                              <InputGroup>
+                                <InputGroupInput
+                                  id={field.name}
+                                  name={field.name}
+                                  value={field.state.value}
+                                  onBlur={field.handleBlur}
+                                  onChange={(e) => field.handleChange(e.target.value)}
+                                  type="text"
+                                  placeholder="高度を入力"
+                                />
+                                <InputGroupAddon align="inline-start">
+                                  <Loader className="text-muted-foreground" />
+                                </InputGroupAddon>
+                                <InputGroupAddon
+                                  align="inline-end"
+                                  className="gap-1 py-0 pr-1"
+                                  aria-invalid={uncertaintyEnabled && stdField.state.meta.errors.length > 0}
+                                >
+                                  {uncertaintyEnabled && (
+                                    <>
+                                      <InputGroupText className="text-xs" aria-hidden="true">σ</InputGroupText>
+                                      <InputGroupInput
+                                        id={stdField.name}
+                                        name={stdField.name}
+                                        aria-label="バースト高度の標準偏差"
+                                        value={stdField.state.value}
+                                        onBlur={stdField.handleBlur}
+                                        onChange={(e) => stdField.handleChange(e.target.value)}
+                                        type="text"
+                                        className="w-12 flex-none px-0 text-right"
+                                      />
+                                    </>
+                                  )}
+                                  <InputGroupText className="text-muted-foreground">m</InputGroupText>
+                                </InputGroupAddon>
+                              </InputGroup>
+                              {field.state.meta.isTouched && field.state.meta.errors.length ? (
+                                <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
+                              ) : null}
+                              {uncertaintyEnabled && stdField.state.meta.isTouched && stdField.state.meta.errors.length ? (
+                                <p className="text-[11px] text-red-500 mt-1">{stdField.state.meta.errors.join(", ")}</p>
+                              ) : null}
+                            </Field>
+                          )}
+                        />
+                      )}
                     />
-                    <InputGroupAddon align="inline-start">
-                      <Loader className="text-muted-foreground" />
-                    </InputGroupAddon>
-                    <InputGroupAddon align="inline-end">
-                      <InputGroupText className="text-muted-foreground">m</InputGroupText>
-                    </InputGroupAddon>
-                  </InputGroup>
-                  {field.state.meta.isTouched && field.state.meta.errors.length ? (
-                    <p className="text-[11px] text-red-500 mt-1">{field.state.meta.errors.join(", ")}</p>
-                  ) : null}
-                </Field>
-              )}
+                  </>
+                )
+              }}
             />
 
             {/* 気象データソース */}

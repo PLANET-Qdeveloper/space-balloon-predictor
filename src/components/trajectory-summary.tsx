@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Navigation, Timer, Gauge, Download, CloudSun } from "lucide-react"
+import { Navigation, Timer, Gauge, Download, CloudSun, ChevronsDown, ChevronsUp } from "lucide-react"
 import { AltitudeTimeChart } from "@/components/altitude-time-chart"
 import { Button } from "@/components/ui/button"
 import { haversineKm } from "@/lib/geo"
@@ -16,6 +16,8 @@ import type { MonteCarloResult, PredictionData, TrajectoryPoint } from "@/types"
 interface TrajectorySummaryProps {
   predictionData: PredictionData | null
   monteCarloData?: MonteCarloResult | null
+  ascentRate?: number
+  descentRate?: number
   selectedPointIndex?: number | null
   launchLat?: number
   launchLon?: number
@@ -29,6 +31,11 @@ function formatDuration(totalS: number | undefined): string {
   const h = Math.floor(totalMin / 60)
   const m = totalMin % 60
   return `${h}時間${m}分`
+}
+
+function formatRate(rate: number | undefined): string {
+  if (rate === undefined || !Number.isFinite(rate)) return "—"
+  return rate.toLocaleString("ja-JP", { maximumFractionDigits: 2 })
 }
 
 function formatModelRunTime(iso: string | undefined): string | null {
@@ -79,6 +86,8 @@ function StatRow({
 export function TrajectorySummary({
   predictionData,
   monteCarloData = null,
+  ascentRate,
+  descentRate,
   selectedPointIndex = null,
   launchLat,
   launchLon,
@@ -132,6 +141,8 @@ export function TrajectorySummary({
       : single?.drift_km
 
   const burstAlt = isMonteCarlo ? point?.burst_altitude : single?.max_altitude
+  const displayedAscentRate = isMonteCarlo ? point?.ascent_rate_m_s : ascentRate
+  const displayedDescentRate = isMonteCarlo ? point?.descent_rate_m_s : descentRate
 
   const ascent =
     isMonteCarlo && point
@@ -187,7 +198,7 @@ export function TrajectorySummary({
       {model && modelRunTime && (
         <div className="flex items-start gap-1.5 border-b pb-2 mb-1 text-[11px] text-muted-foreground">
           <CloudSun className="size-3.5 shrink-0 mt-0.5" />
-          <span>{model}モデル実行時刻: {modelRunTime}</span>
+          <span>予報時刻: {modelRunTime}</span>
         </div>
       )}
 
@@ -196,6 +207,18 @@ export function TrajectorySummary({
         label="バースト高度"
         value={burstAlt !== undefined ? Math.round(burstAlt).toLocaleString() : "—"}
         unit="m"
+      />
+      <StatRow
+        icon={<ChevronsUp className="size-3.5" />}
+        label="上昇速度"
+        value={formatRate(displayedAscentRate)}
+        unit="m/s"
+      />
+      <StatRow
+        icon={<ChevronsDown className="size-3.5" />}
+        label="下降速度"
+        value={formatRate(displayedDescentRate)}
+        unit="m/s"
       />
       <StatRow
         icon={<Timer className="size-3.5" />}
@@ -211,17 +234,10 @@ export function TrajectorySummary({
       {isMonteCarlo && point && point.deviation_sigma != null && (
         <StatRow
           icon={<SigmaIcon />}
-          label="偏差 σ"
+          label="バースト高度の平均との差"
           value={`${point.deviation_sigma >= 0 ? "+" : ""}${point.deviation_sigma.toFixed(2)}`}
+          unit="σ"
           dotColor={sigmaToDotClass(point.deviation_sigma)}
-        />
-      )}
-      {isMonteCarlo && point && selectedContainment != null && (
-        <StatRow
-          icon={<SigmaIcon />}
-          label="アンサンブル包含率"
-          value={`${(selectedContainment * 100).toFixed(0)}%`}
-          dotColor={containmentToDotClass(selectedContainment)}
         />
       )}
 

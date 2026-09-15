@@ -56,8 +56,10 @@ struct SimulationResult {
 struct MonteCarloPoint {
     landing_lat: f64,
     landing_lon: f64,
+    ascent_rate_m_s: f64,
+    descent_rate_m_s: f64,
     burst_altitude: f64,
-    /// 平均バースト高度からの偏差 (σ)。アンサンブル等 σが定義できない場合は None
+    /// バースト高度の標準偏差で算出した偏差 (σ)。高度をサンプリングしない場合は None
     deviation_sigma: Option<f64>,
 }
 
@@ -77,6 +79,86 @@ struct MonteCarloResult {
     mean_ascent_path: Vec<TrajectoryPoint>,
     mean_descent_path: Vec<TrajectoryPoint>,
     trajectories: Vec<MonteCarloTrajectory>,
+}
+
+#[derive(Clone, Copy)]
+struct MonteCarloSample {
+    ascent_rate_m_s: f64,
+    descent_rate_m_s: f64,
+    burst_altitude_m: f64,
+}
+
+fn normal_distribution(
+    mean: f64,
+    standard_deviation: f64,
+    label: &str,
+) -> Result<Option<Normal<f64>>, String> {
+    if !mean.is_finite() {
+        return Err(format!("{label} mean must be finite"));
+    }
+    if !standard_deviation.is_finite() || standard_deviation < 0.0 {
+        return Err(format!("{label} standard deviation must be non-negative"));
+    }
+    if standard_deviation == 0.0 {
+        return Ok(None);
+    }
+
+    Normal::new(mean, standard_deviation)
+        .map(Some)
+        .map_err(|e| format!("Invalid {label} distribution: {e}"))
+}
+
+fn sample_parameter<R: Rng + ?Sized>(
+    rng: &mut R,
+    mean: f64,
+    distribution: Option<&Normal<f64>>,
+    minimum: f64,
+) -> f64 {
+    let Some(normal) = distribution else {
+        return mean;
+    };
+
+    loop {
+        let sample: f64 = rng.sample(normal);
+        if sample.is_finite() && sample >= minimum {
+            return sample;
+        }
+    }
+}
+
+#[cfg(test)]
+mod monte_carlo_parameter_tests {
+    use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    #[test]
+    fn zero_standard_deviation_keeps_the_mean() {
+        let distribution = normal_distribution(6.0, 0.0, "ascent rate").unwrap();
+        let mut rng = StdRng::seed_from_u64(1);
+
+        for _ in 0..4 {
+            assert_eq!(
+                sample_parameter(&mut rng, 6.0, distribution.as_ref(), f64::EPSILON),
+                6.0
+            );
+        }
+    }
+
+    #[test]
+    fn negative_standard_deviation_is_rejected() {
+        assert!(normal_distribution(6.0, -0.1, "ascent rate").is_err());
+    }
+
+    #[test]
+    fn rate_samples_stay_positive() {
+        let distribution = normal_distribution(1.0, 2.0, "ascent rate").unwrap();
+        let mut rng = StdRng::seed_from_u64(42);
+
+        for _ in 0..32 {
+            let sample = sample_parameter(&mut rng, 1.0, distribution.as_ref(), 0.1);
+            assert!(sample >= 0.1);
+        }
+    }
 }
 
 /// 成層圏（高度11,000m以上）に滞在した時間（秒）を返す
@@ -844,9 +926,11 @@ async fn run_monte_carlo(
     launch_alt: f64,
     launch_time: String,
     ascent_rate: f64,
+    ascent_rate_std: f64,
     gross_mass_kg: f64,
     balloon_class_g: u32,
     descent_rate: f64,
+    descent_rate_std: f64,
     burst_altitude_mean: f64,
     burst_altitude_std: f64,
     num_samples: u32,
@@ -883,9 +967,16 @@ async fn run_monte_carlo(
         )
         .map_err(|e| format!("Failed to load GRIB data: {}", e))?;
 
-        let use_scatter = burst_altitude_std > 0.0;
+        let ascent_rate_distribution =
+            normal_distribution(ascent_rate, ascent_rate_std, "ascent rate")?;
+        let descent_rate_distribution =
+            normal_distribution(descent_rate, descent_rate_std, "descent rate")?;
+        let burst_altitude_distribution =
+            normal_distribution(burst_altitude_mean, burst_altitude_std, "burst altitude")?;
+        let use_scatter =
+            ascent_rate_std > 0.0 || descent_rate_std > 0.0 || burst_altitude_std > 0.0;
 
-        let sample_count = if use_scatter { num_samples } else { 1 };
+        let sample_count = if use_scatter { num_samples.max(1) } else { 1 };
 
         let _ = app.emit(
             "progress",
@@ -895,16 +986,31 @@ async fn run_monte_carlo(
             },
         );
 
-        // サンプルするバースト高度を事前に生成
-        let burst_altitudes: Vec<f64> = if use_scatter {
-            let normal = Normal::new(burst_altitude_mean, burst_altitude_std)
-                .map_err(|e| format!("Invalid distribution parameters: {}", e))?;
+        // 各物理パラメータを独立にサンプリング
+        let samples: Vec<MonteCarloSample> = {
             let mut rng = rand::thread_rng();
             (0..sample_count)
-                .map(|_| rng.sample(normal).max(0.0))
+                .map(|_| MonteCarloSample {
+                    ascent_rate_m_s: sample_parameter(
+                        &mut rng,
+                        ascent_rate,
+                        ascent_rate_distribution.as_ref(),
+                        f64::EPSILON,
+                    ),
+                    descent_rate_m_s: sample_parameter(
+                        &mut rng,
+                        descent_rate,
+                        descent_rate_distribution.as_ref(),
+                        f64::EPSILON,
+                    ),
+                    burst_altitude_m: sample_parameter(
+                        &mut rng,
+                        burst_altitude_mean,
+                        burst_altitude_distribution.as_ref(),
+                        0.0,
+                    ),
+                })
                 .collect()
-        } else {
-            vec![burst_altitude_mean]
         };
 
         // Rayon で並列シミュレーション
@@ -912,20 +1018,26 @@ async fn run_monte_carlo(
         let completed_inner = completed.clone();
         let app_inner = app.clone();
 
-        let (points, trajectories): (Vec<MonteCarloPoint>, Vec<MonteCarloTrajectory>) = burst_altitudes
+        let (points, trajectories): (Vec<MonteCarloPoint>, Vec<MonteCarloTrajectory>) = samples
             .par_iter()
-            .map(|&sampled_burst| {
-                let deviation = if use_scatter {
-                    (sampled_burst - burst_altitude_mean) / burst_altitude_std
+            .map(|sample| {
+                let deviation = if ascent_rate_std == 0.0
+                    && descent_rate_std == 0.0
+                    && burst_altitude_std > 0.0
+                {
+                    Some((sample.burst_altitude_m - burst_altitude_mean) / burst_altitude_std)
                 } else {
-                    0.0
+                    None
                 };
 
                 let config = SimConfig {
                     launch_site,
-                    ascent,
-                    ground_descend_rate_m_s: descent_rate,
-                    burst_altitude_m: sampled_burst,
+                    ascent: AscentParams {
+                        target_rate_m_s: sample.ascent_rate_m_s,
+                        ..ascent
+                    },
+                    ground_descend_rate_m_s: sample.descent_rate_m_s,
+                    burst_altitude_m: sample.burst_altitude_m,
                     dt: 5.0,
                 };
 
@@ -941,8 +1053,10 @@ async fn run_monte_carlo(
                 let mc_point = MonteCarloPoint {
                     landing_lat: result.landing_lat,
                     landing_lon: result.landing_lon,
-                    burst_altitude: sampled_burst,
-                    deviation_sigma: Some(deviation),
+                    ascent_rate_m_s: sample.ascent_rate_m_s,
+                    descent_rate_m_s: sample.descent_rate_m_s,
+                    burst_altitude: sample.burst_altitude_m,
+                    deviation_sigma: deviation,
                 };
 
                 let mc_traj = MonteCarloTrajectory {
@@ -1007,9 +1121,11 @@ async fn run_gefs_simulation(
     launch_alt: f64,
     launch_time: String,
     ascent_rate: f64,
+    ascent_rate_std: f64,
     gross_mass_kg: f64,
     balloon_class_g: u32,
     descent_rate: f64,
+    descent_rate_std: f64,
     burst_altitude_mean: f64,
     burst_altitude_std: f64,
     num_members: u32,
@@ -1041,20 +1157,18 @@ async fn run_gefs_simulation(
             members_to_run.push(GefsMember::Perturbed(i as u8));
         }
 
-        let use_scatter = burst_altitude_std > 0.0;
+        let ascent_rate_distribution =
+            normal_distribution(ascent_rate, ascent_rate_std, "ascent rate")?;
+        let descent_rate_distribution =
+            normal_distribution(descent_rate, descent_rate_std, "descent rate")?;
+        let burst_altitude_distribution =
+            normal_distribution(burst_altitude_mean, burst_altitude_std, "burst altitude")?;
+        let use_scatter =
+            ascent_rate_std > 0.0 || descent_rate_std > 0.0 || burst_altitude_std > 0.0;
         let sample_count = if use_scatter { num_samples.max(1) } else { 1 };
 
         let member_count = members_to_run.len() as u32;
         let total_sims = member_count * sample_count;
-
-        let normal = if use_scatter {
-            Some(
-                Normal::new(burst_altitude_mean, burst_altitude_std)
-                    .map_err(|e| format!("Invalid distribution parameters: {}", e))?,
-            )
-        } else {
-            None
-        };
 
         let completed = Arc::new(AtomicUsize::new(0));
 
@@ -1100,13 +1214,30 @@ async fn run_gefs_simulation(
             )
             .map_err(|e| format!("Failed to load GEFS GRIB data for member {}: {}", member, e))?;
 
-            let burst_altitudes: Vec<f64> = if use_scatter {
+            let samples: Vec<MonteCarloSample> = {
                 let mut rng = rand::thread_rng();
                 (0..sample_count)
-                    .map(|_| rng.sample(normal.as_ref().unwrap()).max(0.0))
+                    .map(|_| MonteCarloSample {
+                        ascent_rate_m_s: sample_parameter(
+                            &mut rng,
+                            ascent_rate,
+                            ascent_rate_distribution.as_ref(),
+                            f64::EPSILON,
+                        ),
+                        descent_rate_m_s: sample_parameter(
+                            &mut rng,
+                            descent_rate,
+                            descent_rate_distribution.as_ref(),
+                            f64::EPSILON,
+                        ),
+                        burst_altitude_m: sample_parameter(
+                            &mut rng,
+                            burst_altitude_mean,
+                            burst_altitude_distribution.as_ref(),
+                            0.0,
+                        ),
+                    })
                     .collect()
-            } else {
-                vec![burst_altitude_mean]
             };
 
             let completed_inner = completed.clone();
@@ -1115,14 +1246,17 @@ async fn run_gefs_simulation(
             let (member_points, member_trajectories): (
                 Vec<MonteCarloPoint>,
                 Vec<MonteCarloTrajectory>,
-            ) = burst_altitudes
+            ) = samples
                 .par_iter()
-                .map(|&sampled_burst| {
+                .map(|sample| {
                     let config = SimConfig {
                         launch_site,
-                        ascent,
-                        ground_descend_rate_m_s: descent_rate,
-                        burst_altitude_m: sampled_burst,
+                        ascent: AscentParams {
+                            target_rate_m_s: sample.ascent_rate_m_s,
+                            ..ascent
+                        },
+                        ground_descend_rate_m_s: sample.descent_rate_m_s,
+                        burst_altitude_m: sample.burst_altitude_m,
                         dt: 5.0,
                     };
 
@@ -1138,7 +1272,9 @@ async fn run_gefs_simulation(
                     let mc_point = MonteCarloPoint {
                         landing_lat: result.landing_lat,
                         landing_lon: result.landing_lon,
-                        burst_altitude: sampled_burst,
+                        ascent_rate_m_s: sample.ascent_rate_m_s,
+                        descent_rate_m_s: sample.descent_rate_m_s,
+                        burst_altitude: sample.burst_altitude_m,
                         deviation_sigma: None,
                     };
 

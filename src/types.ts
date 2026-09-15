@@ -21,6 +21,8 @@ export interface PredictionData {
 export interface MonteCarloPoint {
   landing_lat: number
   landing_lon: number
+  ascent_rate_m_s: number
+  descent_rate_m_s: number
   burst_altitude: number
   deviation_sigma: number | null
 }

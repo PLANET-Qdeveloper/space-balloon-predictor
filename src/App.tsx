@@ -18,12 +18,17 @@ function App() {
   const [launchLat, setLaunchLat] = useState<number>(DEFAULT_LAT)
   const [launchLon, setLaunchLon] = useState<number>(DEFAULT_LON)
   const [launchTimeUtc, setLaunchTimeUtc] = useState<string | null>(null)
+  const [simulationRates, setSimulationRates] = useState<{ ascent: number; descent: number } | null>(null)
 
   const handlePredict = useCallback(async (values: PredictorFormValues) => {
     setProgress({ stage: "preparing" })
     setPredictionData(null)
     setMonteCarloData(null)
     setSelectedPointIndex(null)
+    setSimulationRates({
+      ascent: Number(values.ascentRate),
+      descent: Number(values.descentRate),
+    })
 
     const unlisten = await listen<ProgressInfo>("progress", (event) => {
       setProgress(event.payload)
@@ -50,12 +55,14 @@ function App() {
         const result = await invoke<MonteCarloResult>("run_gefs_simulation", {
           launchLat: values.launchLat,
           launchLon: values.launchLon,
-          launchAlt: 10.0,
+          launchAlt: Number(values.launchAltitude),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
+          ascentRateStd: Number(values.ascentRateStd),
           grossMassKg: Number(values.totalWeight) / 1000,
           balloonClassG: Number(values.balloonClass),
           descentRate: Number(values.descentRate),
+          descentRateStd: Number(values.descentRateStd),
           burstAltitudeMean: Number(values.burstAltitude),
           burstAltitudeStd: Number(values.burstAltitudeStd),
           numMembers: Number(values.gefsNumMembers),
@@ -67,12 +74,14 @@ function App() {
         const result = await invoke<MonteCarloResult>("run_monte_carlo", {
           launchLat: values.launchLat,
           launchLon: values.launchLon,
-          launchAlt: 10.0,
+          launchAlt: Number(values.launchAltitude),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
+          ascentRateStd: Number(values.ascentRateStd),
           grossMassKg: Number(values.totalWeight) / 1000,
           balloonClassG: Number(values.balloonClass),
           descentRate: Number(values.descentRate),
+          descentRateStd: Number(values.descentRateStd),
           burstAltitudeMean: Number(values.burstAltitude),
           burstAltitudeStd: Number(values.burstAltitudeStd),
           numSamples: Number(values.numSamples),
@@ -83,7 +92,7 @@ function App() {
         const result = await invoke<PredictionData>("run_simulation", {
           launchLat: values.launchLat,
           launchLon: values.launchLon,
-          launchAlt: 10.0,
+          launchAlt: Number(values.launchAltitude),
           launchTime: launchDateTime.toISOString(),
           ascentRate: Number(values.ascentRate),
           grossMassKg: Number(values.totalWeight) / 1000,
@@ -125,6 +134,8 @@ function App() {
         <TrajectoryMap
           predictionData={predictionData}
           monteCarloData={monteCarloData}
+          ascentRate={simulationRates?.ascent}
+          descentRate={simulationRates?.descent}
           selectedPointIndex={selectedPointIndex}
           onPointSelect={setSelectedPointIndex}
           launchLat={launchLat}
