@@ -180,12 +180,12 @@ export function TrajectoryMap({
     if (monteCarloData) {
       const ascent: TrajectoryPoint[] = monteCarloData.mean_ascent_path ?? []
       const descent: TrajectoryPoint[] = monteCarloData.mean_descent_path ?? []
-      return [...ascent, ...descent.slice(1)]
+      return [...ascent, ...descent.slice(ascent.length > 0 ? 1 : 0)]
     }
     if (!predictionData) return null
     const ascent: TrajectoryPoint[] = predictionData.ascent_path ?? []
     const descent: TrajectoryPoint[] = predictionData.descent_path ?? []
-    return [...ascent, ...descent.slice(1)]
+    return [...ascent, ...descent.slice(ascent.length > 0 ? 1 : 0)]
   }, [predictionData, monteCarloData])
 
   const activeSelectedIndex = useMemo(() => {
@@ -222,9 +222,9 @@ export function TrajectoryMap({
     const activePeak = (() => {
       if (activeSelectedIndex !== null && activeSelectedIndex !== undefined && monteCarloData?.trajectories?.[activeSelectedIndex]) {
         const traj = monteCarloData.trajectories[activeSelectedIndex]
-        return findPeak([...(traj.ascent_path ?? []), ...(traj.descent_path ?? [])])
+        return findPeak(traj.ascent_path ?? [])
       }
-      return findPeak(allPoints ?? [])
+      return findPeak(predictionData?.ascent_path ?? monteCarloData?.mean_ascent_path ?? [])
     })()
 
     if (activePeak) {
@@ -238,14 +238,14 @@ export function TrajectoryMap({
       monteCarloData?.trajectories?.[hoveredPointIndex]
     ) {
       const traj = monteCarloData.trajectories[hoveredPointIndex]
-      const hoverPeak = findPeak([...(traj.ascent_path ?? []), ...(traj.descent_path ?? [])])
+      const hoverPeak = findPeak(traj.ascent_path ?? [])
       if (hoverPeak) {
         result.push({ ...hoverPeak, isHovered: true })
       }
     }
 
     return result
-  }, [allPoints, monteCarloData, hoveredPointIndex, activeSelectedIndex])
+  }, [predictionData, monteCarloData, hoveredPointIndex, activeSelectedIndex])
 
   const deckLayers = useMemo(() => {
     const layers: any[] = []

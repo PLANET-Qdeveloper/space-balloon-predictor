@@ -116,6 +116,9 @@ enum Command {
         /// Launch site altitude in meters (default: 10.0)
         #[arg(default_value_t = 10.0)]
         alt: f64,
+        /// Descend immediately from the supplied altitude
+        #[arg(long)]
+        start_in_descent: bool,
         /// Balloon ascent rate in m/s
         #[arg(long, default_value_t = 5.0)]
         ascent: f64,
@@ -160,6 +163,9 @@ enum Command {
         /// Launch site altitude in meters (default: 10.0)
         #[arg(default_value_t = 10.0)]
         alt: f64,
+        /// Descend immediately from the supplied altitude
+        #[arg(long)]
+        start_in_descent: bool,
         /// Balloon ascent rate in m/s
         #[arg(long, default_value_t = 5.0)]
         ascent: f64,
@@ -218,6 +224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             lat,
             lon,
             alt,
+            start_in_descent,
             ascent,
             balloon_class,
             gross_mass,
@@ -243,6 +250,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let dataset = Dataset::from_grib_files(&local_paths, launch_time, pressure_unit, HeightUnit::DeciMeters)?;
 
             let config = SimConfig {
+                start_in_descent,
                 launch_site,
                 ascent: build_ascent(ascent, balloon_class, gross_mass, coeff_k, burst_volume)
                     .map_err(|e| format!("Invalid ascent parameters: {e}"))?,
@@ -282,6 +290,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             lat,
             lon,
             alt,
+            start_in_descent,
             ascent,
             balloon_class,
             gross_mass,
@@ -311,6 +320,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let config = SimConfig {
+                start_in_descent,
                 launch_site,
                 ascent: build_ascent(ascent, balloon_class, gross_mass, coeff_k, burst_volume)
                     .map_err(|e| format!("Invalid ascent parameters: {e}"))?,

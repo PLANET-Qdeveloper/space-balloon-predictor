@@ -86,7 +86,7 @@ export function AltitudeTimeChart({
     }
     return [
       ...tagLeg(ascentData, "ascent").map((p) => ({ ...p, meanAlt: nearestMeanAlt(p.t) })),
-      ...tagLeg(descentData.slice(1), "descent").map((p) => ({ ...p, meanAlt: nearestMeanAlt(p.t) })),
+      ...tagLeg(descentData.slice(ascentData.length > 0 ? 1 : 0), "descent").map((p) => ({ ...p, meanAlt: nearestMeanAlt(p.t) })),
     ]
   }, [ascentData, descentData, meanAscentData, meanDescentData])
 

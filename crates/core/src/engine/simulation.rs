@@ -89,6 +89,8 @@ pub struct AscentParams {
 #[derive(Debug, Clone, Copy)]
 pub struct SimConfig {
     pub launch_site: Geodetic,
+    /// Descend immediately from the initial position.
+    pub start_in_descent: bool,
     pub ascent: AscentParams,
     pub ground_descend_rate_m_s: f64,
     pub burst_altitude_m: f64,
@@ -149,13 +151,13 @@ impl Simulator {
             atmospheres,
             cumulative_hours,
             launch_offset_hours,
-            ascent_cal: calibrate_ascent(
+            ascent_cal: if config.start_in_descent { None } else { calibrate_ascent(
                 config.ascent.coeff_k,
                 config.ascent.gross_mass_kg,
                 config.ascent.target_rate_m_s,
                 config.launch_site.alt,
                 config.ascent.burst_volume_m3,
-            ),
+            ) },
         }
     }
 
@@ -330,9 +332,12 @@ impl Simulator {
             lon: self.config.launch_site.lon,
             alt: self.config.launch_site.alt,
             time: 0.0,
-            is_burst: false,
+            is_burst: self.config.start_in_descent,
         };
 
+        if state.is_burst && state.alt <= ground(state.lat, state.lon) {
+            return Trajectory::new(vec![state]);
+        }
         trajectory.push(state);
 
         loop {
@@ -433,10 +438,38 @@ mod tests {
     }
 
     #[test]
+    fn descent_start_never_ascends_and_lands_on_local_terrain() {
+        let time = Utc::now();
+        let dataset = Dataset::from_atmospheres(vec![(time, nan_atmosphere())]).unwrap();
+        let simulator = Simulator::new(SimConfig {
+            start_in_descent: true,
+            launch_site: Geodetic { lat: 0.5, lon: 0.5, alt: 15000.0 },
+            ascent: test_ascent(),
+            ground_descend_rate_m_s: 5.0,
+            burst_altitude_m: 30000.0,
+            dt: 5.0,
+        }, dataset, time);
+        assert!(simulator.ascent_cal.is_none());
+        for surface in [0.0, 1200.0, -50.0] {
+            let trajectory = simulator.run_with_ground(|_, _| surface);
+            assert_eq!(trajectory.states[0].alt, 15000.0);
+            assert_eq!(trajectory.states[0].time, 0.0);
+            assert!(trajectory.states.iter().all(|state| state.is_burst));
+            assert!(trajectory.states.windows(2).all(|pair|
+                pair[1].alt < pair[0].alt && pair[1].time > pair[0].time));
+            assert_eq!(trajectory.states.last().unwrap().alt, surface);
+        }
+        let landed = simulator.run_with_ground(|_, _| 15000.0);
+        assert_eq!(landed.states.len(), 1);
+        assert_eq!(landed.states[0].time, 0.0);
+    }
+
+    #[test]
     fn landing_uses_local_surface_instead_of_launch_height() {
         let time = Utc::now();
         let dataset = Dataset::from_atmospheres(vec![(time, nan_atmosphere())]).unwrap();
         let simulator = Simulator::new(SimConfig {
+            start_in_descent: false,
             launch_site: Geodetic { lat: 0.5, lon: 0.5, alt: 500.0 },
             ascent: test_ascent(),
             ground_descend_rate_m_s: 5.0,
@@ -468,6 +501,7 @@ mod tests {
         });
         let dataset = Dataset::from_atmospheres(vec![(time, Atmosphere::for_test(levels))]).unwrap();
         let simulator = Simulator::new(SimConfig {
+            start_in_descent: false,
             launch_site: Geodetic { lat: 0.5, lon: 0.5, alt: 100.0 },
             ascent: test_ascent(), ground_descend_rate_m_s: 5.0,
             burst_altitude_m: 1500.0, dt: 5.0,
@@ -486,6 +520,7 @@ mod tests {
     fn dynamics_is_finite_with_nan_grid() {
         let dataset = Dataset::from_atmospheres(vec![(Utc::now(), nan_atmosphere())]).unwrap();
         let config = SimConfig {
+            start_in_descent: false,
             launch_site: Geodetic {
                 lat: 35.0,
                 lon: 139.0,
@@ -515,6 +550,7 @@ mod tests {
     fn run_produces_valid_coordinates_with_nan_grid() {
         let dataset = Dataset::from_atmospheres(vec![(Utc::now(), nan_atmosphere())]).unwrap();
         let config = SimConfig {
+            start_in_descent: false,
             launch_site: Geodetic {
                 lat: 35.0,
                 lon: 139.0,
@@ -542,6 +578,7 @@ mod tests {
     fn ascent_rate_grows_with_altitude_in_dynamics() {
         let dataset = Dataset::from_atmospheres(vec![(Utc::now(), nan_atmosphere())]).unwrap();
         let config = SimConfig {
+            start_in_descent: false,
             launch_site: Geodetic {
                 lat: 35.0,
                 lon: 139.0,

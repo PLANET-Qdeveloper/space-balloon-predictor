@@ -764,7 +764,7 @@ fn trajectory_to_result(
         .position(|s| s.is_burst)
         .unwrap_or(trajectory.states.len());
 
-    let ascent_path: Vec<TrajectoryPoint> = trajectory.states[..=burst_idx.min(trajectory.states.len() - 1)]
+    let ascent_path: Vec<TrajectoryPoint> = trajectory.states[..if burst_idx == 0 { 0 } else { (burst_idx + 1).min(trajectory.states.len()) }]
         .iter()
         .map(|s| TrajectoryPoint {
             lat: s.lat,
@@ -854,6 +854,7 @@ fn ascent_params(
 #[tauri::command]
 async fn run_simulation(
     app: AppHandle,
+    start_in_descent: Option<bool>,
     launch_lat: f64,
     launch_lon: f64,
     launch_alt: f64,
@@ -865,7 +866,13 @@ async fn run_simulation(
     burst_altitude: f64,
 ) -> Result<SimulationResult, String> {
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
-    let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
+    let start_in_descent = start_in_descent.unwrap_or(false);
+    let ascent_rate = if start_in_descent { 5.0 } else { ascent_rate };
+    let ascent = if start_in_descent {
+        ascent_params(5.0, 6.0, 2000)?
+    } else {
+        ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?
+    };
 
     let launch_site = Geodetic {
         lat: launch_lat,
@@ -899,6 +906,7 @@ async fn run_simulation(
         let _ = app.emit("progress", ProgressEvent::RunningSimulation);
 
         let config = SimConfig {
+            start_in_descent,
             launch_site,
             ascent,
             ground_descend_rate_m_s: descent_rate,
@@ -924,6 +932,7 @@ async fn run_simulation(
 #[tauri::command]
 async fn run_monte_carlo(
     app: AppHandle,
+    start_in_descent: Option<bool>,
     launch_lat: f64,
     launch_lon: f64,
     launch_alt: f64,
@@ -939,13 +948,23 @@ async fn run_monte_carlo(
     num_samples: u32,
 ) -> Result<MonteCarloResult, String> {
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
-    let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
+    let start_in_descent = start_in_descent.unwrap_or(false);
+    let ascent_rate = if start_in_descent { 5.0 } else { ascent_rate };
+    let ascent = if start_in_descent {
+        ascent_params(5.0, 6.0, 2000)?
+    } else {
+        ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?
+    };
 
     let launch_site = Geodetic {
         lat: launch_lat,
         lon: launch_lon,
         alt: launch_alt,
     };
+
+    let ascent_rate_std = if start_in_descent { 0.0 } else { ascent_rate_std };
+    let burst_altitude_mean = if start_in_descent { launch_alt } else { burst_altitude_mean };
+    let burst_altitude_std = if start_in_descent { 0.0 } else { burst_altitude_std };
 
     tokio::task::spawn_blocking(move || -> Result<MonteCarloResult, String> {
         let gfs_run = select_available_gfs_run_time(Utc::now(), launch);
@@ -1034,6 +1053,7 @@ async fn run_monte_carlo(
                 };
 
                 let config = SimConfig {
+                    start_in_descent,
                     launch_site,
                     ascent: AscentParams {
                         target_rate_m_s: sample.ascent_rate_m_s,
@@ -1086,6 +1106,7 @@ async fn run_monte_carlo(
 
         // 平均バースト高度の経路を計算
         let mean_config = SimConfig {
+            start_in_descent,
             launch_site,
             ascent,
             ground_descend_rate_m_s: descent_rate,
@@ -1120,6 +1141,7 @@ async fn run_monte_carlo(
 #[tauri::command]
 async fn run_gefs_simulation(
     app: AppHandle,
+    start_in_descent: Option<bool>,
     launch_lat: f64,
     launch_lon: f64,
     launch_alt: f64,
@@ -1142,13 +1164,23 @@ async fn run_gefs_simulation(
         gefs_run.to_rfc3339(),
         launch.to_rfc3339()
     );
-    let ascent = ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?;
+    let start_in_descent = start_in_descent.unwrap_or(false);
+    let ascent_rate = if start_in_descent { 5.0 } else { ascent_rate };
+    let ascent = if start_in_descent {
+        ascent_params(5.0, 6.0, 2000)?
+    } else {
+        ascent_params(ascent_rate, gross_mass_kg, balloon_class_g)?
+    };
 
     let launch_site = Geodetic {
         lat: launch_lat,
         lon: launch_lon,
         alt: launch_alt,
     };
+
+    let ascent_rate_std = if start_in_descent { 0.0 } else { ascent_rate_std };
+    let burst_altitude_mean = if start_in_descent { launch_alt } else { burst_altitude_mean };
+    let burst_altitude_std = if start_in_descent { 0.0 } else { burst_altitude_std };
 
     tokio::task::spawn_blocking(move || -> Result<MonteCarloResult, String> {
         let work_dir = Path::new(".").to_path_buf();
@@ -1254,6 +1286,7 @@ async fn run_gefs_simulation(
                 .par_iter()
                 .map(|sample| {
                     let config = SimConfig {
+                        start_in_descent,
                         launch_site,
                         ascent: AscentParams {
                             target_rate_m_s: sample.ascent_rate_m_s,
@@ -1304,6 +1337,7 @@ async fn run_gefs_simulation(
             if idx == 0 {
                 if use_scatter {
                     let mean_config = SimConfig {
+                        start_in_descent,
                         launch_site,
                         ascent,
                         ground_descend_rate_m_s: descent_rate,

@@ -27,6 +27,7 @@ export type WeatherSource = "gfs" | "gefs"
 export interface PredictorFormValues {
   launchLat: number
   launchLon: number
+  startInDescent: boolean
   launchAltitude: string
   launchDate: Date | undefined
   launchTime: string
@@ -132,15 +133,17 @@ export function AppSidebar({
   onPositionModeChange,
 }: AppSidebarProps) {
   const [popoverOpen, setPopoverOpen] = useState(false)
+  const [startInDescent, setStartInDescent] = useState(false)
 
   const defaultValues: PredictorFormValues = {
     launchLat: launchLat ?? DEFAULT_LAT,
     launchLon: launchLon ?? DEFAULT_LON,
+    startInDescent: false,
     launchAltitude: "10",
     launchDate: undefined,
     launchTime: "",
     balloonClass: "2000",
-    totalWeight: "6000",
+    totalWeight: "10560",
     ascentRate: "6",
     ascentRateStd: "0",
     descentRate: "6",
@@ -395,7 +398,7 @@ export function AppSidebar({
             </Field>
 
             <FieldGroup className="flex flex-col gap-y-2">
-              {/* 放球日 */}
+              {/* 開始日 */}
               <form.Field
                 name="launchDate"
                 validators={{
@@ -403,7 +406,7 @@ export function AppSidebar({
                 }}
                 children={(field) => (
                   <Field className="flex-1">
-                    <FieldLabel className="text-xs" htmlFor={field.name}>放球日</FieldLabel>
+                    <FieldLabel className="text-xs" htmlFor={field.name}>開始日</FieldLabel>
                     <Popover>
                       <PopoverTrigger asChild>
                         <button type="button" className="w-full text-left outline-none block">
@@ -448,7 +451,7 @@ export function AppSidebar({
                 )}
               />
 
-              {/* 放球時刻 */}
+              {/* 開始時刻 */}
               <form.Field
                 name="launchTime"
                 validators={{
@@ -456,7 +459,7 @@ export function AppSidebar({
                 }}
                 children={(field) => (
                   <Field className="flex-1">
-                    <FieldLabel className="text-xs" htmlFor={field.name}>放球時刻（JST）</FieldLabel>
+                    <FieldLabel className="text-xs" htmlFor={field.name}>開始時刻（JST）</FieldLabel>
                     <InputGroup>
                       <InputGroupInput
                         id={field.name}
@@ -480,6 +483,7 @@ export function AppSidebar({
               />
             </FieldGroup>
 
+            
             {/* 初期高度 */}
             <form.Field
               name="launchAltitude"
@@ -510,7 +514,25 @@ export function AppSidebar({
               )}
             />
 
-            <FieldGroup className="flex flex-col gap-y-2">
+            <form.Field name="startInDescent" children={(field) => (
+              <Field>
+                <FieldLabel className="text-xs" htmlFor={field.name}>開始フェーズ</FieldLabel>
+                <Select value={field.state.value ? "descent" : "ascent"}
+                  onValueChange={(value) => {
+                    field.handleChange(value === "descent")
+                    setStartInDescent(value === "descent")
+                  }}>
+                  <SelectTrigger id={field.name} className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ascent">上昇から開始</SelectItem>
+                    <SelectItem value="descent">落下から開始</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+            )} />
+
+
+            {!startInDescent && <FieldGroup className="flex flex-col gap-y-2">
               {/* 気球種別 */}
               <form.Field
                 name="balloonClass"
@@ -576,7 +598,7 @@ export function AppSidebar({
                   </Field>
                 )}
               />
-            </FieldGroup>
+            </FieldGroup>}
 
             <form.Subscribe
               selector={(state) => [state.values.monteCarloEnabled, state.values.weatherSource]}
@@ -587,7 +609,7 @@ export function AppSidebar({
                   <>
                     <FieldGroup className="flex flex-col gap-y-2">
                       {/* 上昇速度 */}
-                      <form.Field
+                      {!startInDescent && <form.Field
                         name="ascentRateStd"
                         validators={{
                           onChange: ({ value }) => validateNonNegativeNumber(value, "上昇速度の標準偏差"),
@@ -647,7 +669,7 @@ export function AppSidebar({
                             )}
                           />
                         )}
-                      />
+                      />}
 
                       {/* 落下速度 */}
                       <form.Field
@@ -714,7 +736,7 @@ export function AppSidebar({
                     </FieldGroup>
 
                     {/* バースト高度 */}
-                    <form.Field
+                    {!startInDescent && <form.Field
                       name="burstAltitudeStd"
                       validators={{
                         onChange: ({ value }) => validateNonNegativeNumber(value, "バースト高度の標準偏差"),
@@ -774,7 +796,7 @@ export function AppSidebar({
                           )}
                         />
                       )}
-                    />
+                    />}
                   </>
                 )
               }}

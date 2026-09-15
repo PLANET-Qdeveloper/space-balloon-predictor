@@ -22,6 +22,7 @@ let dataset = Dataset::from_grib_files(
 // シミュレーション設定
 let launch_site = Geodetic { lat: 35.0, lon: 139.0, alt: 10.0 };
 let config = SimConfig {
+    start_in_descent: false,
     launch_site,
     ascent: AscentParams {
         gross_mass_kg: 6.0,
@@ -75,6 +76,7 @@ let trajectories: Vec<_> = (0..1000)
     .into_par_iter()
     .map(|_| {
         let config = SimConfig {
+            start_in_descent: false,
             launch_site,
             ascent: AscentParams {
                 gross_mass_kg: 6.0,
@@ -91,3 +93,6 @@ let trajectories: Vec<_> = (0..1000)
     })
     .collect();
 ```
+### 落下フェーズから開始
+
+`SimConfig.start_in_descent = true` にすると、`launch_site` の位置・海抜高度と指定日時から直ちに降下します。上昇・バースト条件は使用しません。CLI では `gfs` / `grib` に `--start-in-descent` を付けます。`ground_descend_rate_m_s`（CLI: `--descent`）は地上相当の落下速度です。

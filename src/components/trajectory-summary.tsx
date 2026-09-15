@@ -192,14 +192,14 @@ export function TrajectorySummary({
 
       <StatRow
         icon={<Gauge className="size-3.5" />}
-        label="バースト高度"
+        label={ascent.length === 0 ? "開始高度" : "バースト高度"}
         value={burstAlt !== undefined ? Math.round(burstAlt).toLocaleString() : "—"}
         unit="m"
       />
       <StatRow
         icon={<ChevronsUp className="size-3.5" />}
         label="上昇速度"
-        value={formatRate(displayedAscentRate)}
+        value={ascent.length === 0 ? "—" : formatRate(displayedAscentRate)}
         unit="m/s"
       />
       <StatRow

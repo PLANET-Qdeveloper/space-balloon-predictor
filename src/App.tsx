@@ -26,7 +26,7 @@ function App() {
     setMonteCarloData(null)
     setSelectedPointIndex(null)
     setSimulationRates({
-      ascent: Number(values.ascentRate),
+      ascent: (values.startInDescent ? 5 : Number(values.ascentRate)),
       descent: Number(values.descentRate),
     })
 
@@ -53,18 +53,19 @@ function App() {
 
       if (values.weatherSource === "gefs") {
         const result = await invoke<MonteCarloResult>("run_gefs_simulation", {
+          startInDescent: values.startInDescent,
           launchLat: values.launchLat,
           launchLon: values.launchLon,
           launchAlt: Number(values.launchAltitude),
           launchTime: launchDateTime.toISOString(),
-          ascentRate: Number(values.ascentRate),
-          ascentRateStd: Number(values.ascentRateStd),
-          grossMassKg: Number(values.totalWeight) / 1000,
-          balloonClassG: Number(values.balloonClass),
+          ascentRate: (values.startInDescent ? 5 : Number(values.ascentRate)),
+          ascentRateStd: (values.startInDescent ? 0 : Number(values.ascentRateStd)),
+          grossMassKg: (values.startInDescent ? 6000 : Number(values.totalWeight)) / 1000,
+          balloonClassG: (values.startInDescent ? 2000 : Number(values.balloonClass)),
           descentRate: Number(values.descentRate),
           descentRateStd: Number(values.descentRateStd),
-          burstAltitudeMean: Number(values.burstAltitude),
-          burstAltitudeStd: Number(values.burstAltitudeStd),
+          burstAltitudeMean: (values.startInDescent ? Number(values.launchAltitude) : Number(values.burstAltitude)),
+          burstAltitudeStd: (values.startInDescent ? 0 : Number(values.burstAltitudeStd)),
           numMembers: Number(values.gefsNumMembers),
           numSamples: Number(values.numSamples),
         })
@@ -72,33 +73,35 @@ function App() {
         setMonteCarloData(result)
       } else if (values.monteCarloEnabled) {
         const result = await invoke<MonteCarloResult>("run_monte_carlo", {
+          startInDescent: values.startInDescent,
           launchLat: values.launchLat,
           launchLon: values.launchLon,
           launchAlt: Number(values.launchAltitude),
           launchTime: launchDateTime.toISOString(),
-          ascentRate: Number(values.ascentRate),
-          ascentRateStd: Number(values.ascentRateStd),
-          grossMassKg: Number(values.totalWeight) / 1000,
-          balloonClassG: Number(values.balloonClass),
+          ascentRate: (values.startInDescent ? 5 : Number(values.ascentRate)),
+          ascentRateStd: (values.startInDescent ? 0 : Number(values.ascentRateStd)),
+          grossMassKg: (values.startInDescent ? 6000 : Number(values.totalWeight)) / 1000,
+          balloonClassG: (values.startInDescent ? 2000 : Number(values.balloonClass)),
           descentRate: Number(values.descentRate),
           descentRateStd: Number(values.descentRateStd),
-          burstAltitudeMean: Number(values.burstAltitude),
-          burstAltitudeStd: Number(values.burstAltitudeStd),
+          burstAltitudeMean: (values.startInDescent ? Number(values.launchAltitude) : Number(values.burstAltitude)),
+          burstAltitudeStd: (values.startInDescent ? 0 : Number(values.burstAltitudeStd)),
           numSamples: Number(values.numSamples),
         })
         console.log("Monte Carlo result:", result)
         setMonteCarloData(result)
       } else {
         const result = await invoke<PredictionData>("run_simulation", {
+          startInDescent: values.startInDescent,
           launchLat: values.launchLat,
           launchLon: values.launchLon,
           launchAlt: Number(values.launchAltitude),
           launchTime: launchDateTime.toISOString(),
-          ascentRate: Number(values.ascentRate),
-          grossMassKg: Number(values.totalWeight) / 1000,
-          balloonClassG: Number(values.balloonClass),
+          ascentRate: (values.startInDescent ? 5 : Number(values.ascentRate)),
+          grossMassKg: (values.startInDescent ? 6000 : Number(values.totalWeight)) / 1000,
+          balloonClassG: (values.startInDescent ? 2000 : Number(values.balloonClass)),
           descentRate: Number(values.descentRate),
-          burstAltitude: Number(values.burstAltitude),
+          burstAltitude: (values.startInDescent ? Number(values.launchAltitude) : Number(values.burstAltitude)),
         })
         console.log("Simulation result:", result)
         setPredictionData(result)
