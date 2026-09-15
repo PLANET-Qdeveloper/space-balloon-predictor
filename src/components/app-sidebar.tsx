@@ -63,15 +63,17 @@ interface AppSidebarProps {
   onPositionModeChange: (mode: PositionMode) => void
 }
 
+// 標高（m）は各座標の国土地理院標高APIの値（1m DEM・レーザ、2026-09-15取得）。
+// 出典: https://maps.gsi.go.jp/development/elevation_s.html
 export const PRESETS = [
-  { name: "南レク南楽園ファミリーパーク", lat: 33.13492, lon: 132.50477 },
-  { name: "津島プレーランド", lat: 33.12604, lon: 132.50333 },
-  { name: "グリーンパークすのかわ", lat: 33.04423, lon: 132.48829 },
-  { name: "南レク松軒山公園", lat: 32.97239, lon: 132.55583 },
-  { name: "南レク御荘公園", lat: 32.96417, lon: 132.55206 },
-  { name: "南レク城辺公園", lat: 32.95287, lon: 132.58429 },
-  { name: "土佐西南大規模公園", lat: 33.02483, lon: 133.01651 },
-  { name: "大月町総合グラウンド", lat: 32.83420, lon: 132.71167 },
+  { name: "南レク南楽園ファミリーパーク", lat: 33.13492, lon: 132.50477, elevation: 1.4 },
+  { name: "津島プレーランド", lat: 33.12604, lon: 132.50333, elevation: 1.2 },
+  { name: "グリーンパークすのかわ", lat: 33.04423, lon: 132.48829, elevation: 16.0 },
+  { name: "南レク松軒山公園", lat: 32.97239, lon: 132.55583, elevation: 160.1 },
+  { name: "南レク御荘公園", lat: 32.96417, lon: 132.55206, elevation: 2.6 },
+  { name: "南レク城辺公園", lat: 32.95287, lon: 132.58429, elevation: 44.0 },
+  { name: "土佐西南大規模公園", lat: 33.02483, lon: 133.01651, elevation: 10.9 },
+  { name: "大月町総合グラウンド", lat: 32.83420, lon: 132.71167, elevation: 73.6 },
 ] as const
 
 const DEFAULT_LAT = PRESETS[0].lat
@@ -139,7 +141,7 @@ export function AppSidebar({
     launchLat: launchLat ?? DEFAULT_LAT,
     launchLon: launchLon ?? DEFAULT_LON,
     startInDescent: false,
-    launchAltitude: "10",
+    launchAltitude: "",
     launchDate: undefined,
     launchTime: "",
     balloonClass: "2000",
@@ -180,6 +182,7 @@ export function AppSidebar({
   const handlePresetSelect = (preset: typeof PRESETS[number]) => {
     onPositionModeChange("preset")
     onLaunchPositionChange(preset.lat, preset.lon)
+    form.setFieldValue("launchAltitude", String(preset.elevation))
     setPopoverOpen(false)
   }
 
