@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Navigation, Timer, Gauge, Download, CloudSun, ChevronsDown, ChevronsUp } from "lucide-react"
+import { Navigation, Timer, Gauge, Download, CloudSun, ChevronsDown, ChevronsUp, MapPin } from "lucide-react"
 import { AltitudeTimeChart } from "@/components/altitude-time-chart"
 import { Button } from "@/components/ui/button"
 import { haversineKm } from "@/lib/geo"
@@ -33,6 +33,11 @@ function formatDuration(totalS: number | undefined): string {
 function formatRate(rate: number | undefined): string {
   if (rate === undefined || !Number.isFinite(rate)) return "—"
   return rate.toLocaleString("ja-JP", { maximumFractionDigits: 2 })
+}
+
+function formatCoordinate(coordinate: number | undefined): string {
+  if (coordinate === undefined || !Number.isFinite(coordinate)) return "—"
+  return `${coordinate.toFixed(5)}°`
 }
 
 function formatModelRunTime(iso: string | undefined): string | null {
@@ -218,6 +223,16 @@ export function TrajectorySummary({
         label="水平距離"
         value={drift !== undefined ? drift.toFixed(1) : "—"}
         unit="km"
+      />
+      <StatRow
+        icon={<MapPin className="size-3.5" />}
+        label="落下地点（緯度）"
+        value={formatCoordinate(landingLat)}
+      />
+      <StatRow
+        icon={<MapPin className="size-3.5" />}
+        label="落下地点（経度）"
+        value={formatCoordinate(landingLon)}
       />
       {isMonteCarlo && point && point.deviation_sigma != null && (
         <StatRow
