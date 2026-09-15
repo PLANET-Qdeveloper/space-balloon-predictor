@@ -40,6 +40,7 @@ struct TrajectoryPoint {
 
 #[derive(Serialize)]
 struct SimulationResult {
+    terrain_fallback_used: bool,
     model: String,
     model_run_time_utc: String,
     ascent_path: Vec<TrajectoryPoint>,
@@ -54,6 +55,7 @@ struct SimulationResult {
 
 #[derive(Serialize)]
 struct MonteCarloPoint {
+    terrain_fallback_used: bool,
     landing_lat: f64,
     landing_lon: f64,
     ascent_rate_m_s: f64,
@@ -809,6 +811,7 @@ fn trajectory_to_result(
         };
 
     SimulationResult {
+        terrain_fallback_used: trajectory.terrain_fallback_used,
         model: model.to_string(),
         model_run_time_utc: model_run_time_utc.to_string(),
         ascent_path,
@@ -1051,6 +1054,7 @@ async fn run_monte_carlo(
                 );
 
                 let mc_point = MonteCarloPoint {
+                    terrain_fallback_used: result.terrain_fallback_used,
                     landing_lat: result.landing_lat,
                     landing_lon: result.landing_lon,
                     ascent_rate_m_s: sample.ascent_rate_m_s,
@@ -1270,6 +1274,7 @@ async fn run_gefs_simulation(
                     );
 
                     let mc_point = MonteCarloPoint {
+                        terrain_fallback_used: result.terrain_fallback_used,
                         landing_lat: result.landing_lat,
                         landing_lon: result.landing_lon,
                         ascent_rate_m_s: sample.ascent_rate_m_s,

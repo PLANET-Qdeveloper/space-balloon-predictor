@@ -4,10 +4,7 @@ import { AltitudeTimeChart } from "@/components/altitude-time-chart"
 import { Button } from "@/components/ui/button"
 import { haversineKm } from "@/lib/geo"
 import {
-  containmentToDotClass,
-  ensembleContainments,
   findDefaultSelectedIndex,
-  hasSigma,
   sigmaToDotClass,
 } from "@/lib/mc-points"
 import { buildTrajectoryKml, saveKmlFile } from "@/lib/kml"
@@ -105,15 +102,6 @@ export function TrajectorySummary({
 
   const isMonteCarlo = !!monteCarloData
 
-  const showSigma = monteCarloData ? hasSigma(monteCarloData.points) : false
-  const containments = useMemo(() => {
-    if (!monteCarloData || showSigma) return null
-    return ensembleContainments(monteCarloData.points)
-  }, [monteCarloData, showSigma])
-  const selectedContainment =
-    containments && activeSelectedIndex != null
-      ? containments[activeSelectedIndex] ?? null
-      : null
 
   const point = useMemo(() => {
     if (!monteCarloData) return null

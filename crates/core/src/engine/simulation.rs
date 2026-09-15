@@ -64,11 +64,12 @@ impl Default for BalloonState {
 #[derive(Debug, Clone)]
 pub struct Trajectory {
     pub states: Vec<BalloonState>,
+    pub terrain_fallback_used: bool,
 }
 
 impl Trajectory {
     pub fn new(states: Vec<BalloonState>) -> Self {
-        Self { states }
+        Self { states, terrain_fallback_used: false }
     }
 }
 
@@ -314,6 +315,14 @@ impl Simulator {
     }
 
     pub fn run(&self) -> Trajectory {
+        let mut terrain = super::terrain::Terrain::new();
+        let mut trajectory = self.run_with_ground(|lat, lon| terrain.elevation(lat, lon));
+        trajectory.terrain_fallback_used = terrain.used_fallback();
+        trajectory
+    }
+
+    /// 地表面は海抜標高[m]。テストでは通信せず既知の地形を注入する。
+    fn run_with_ground(&self, mut ground: impl FnMut(f64, f64) -> f64) -> Trajectory {
         let mut trajectory = Vec::new();
 
         let mut state = BalloonState {
@@ -326,8 +335,37 @@ impl Simulator {
 
         trajectory.push(state);
 
-        while !(state.is_burst && state.alt <= self.config.launch_site.alt) {
-            let mut next_state = self.rk4_step(&state, self.config.dt);
+        loop {
+            // 地形を横切る区間を細かく調べる。10 km以上では地表への接触はない。
+            let dt = if state.is_burst && state.alt < 10_000.0 {
+                self.config.dt.min(1.0)
+            } else {
+                self.config.dt
+            };
+            let mut next_state = self.rk4_step(&state, dt);
+
+            if state.is_burst && next_state.alt < 10_000.0 {
+                let surface = ground(next_state.lat, next_state.lon);
+                if next_state.alt <= surface {
+                    // RK4を短い時間幅で再評価し、最初の地表到達を二分探索する。
+                    // 経度もRK4で求めるため、日付変更線付近でも線形補間の飛びがない。
+                    let mut low = 0.0;
+                    let mut high = dt;
+                    for _ in 0..24 {
+                        let mid = (low + high) * 0.5;
+                        let candidate = self.rk4_step(&state, mid);
+                        if candidate.alt > ground(candidate.lat, candidate.lon) {
+                            low = mid;
+                        } else {
+                            high = mid;
+                        }
+                    }
+                    let mut landed = self.rk4_step(&state, high);
+                    landed.alt = ground(landed.lat, landed.lon);
+                    trajectory.push(landed);
+                    break;
+                }
+            }
 
             if !state.is_burst {
                 let alt_burst = next_state.alt >= self.config.burst_altitude_m;
@@ -395,6 +433,56 @@ mod tests {
     }
 
     #[test]
+    fn landing_uses_local_surface_instead_of_launch_height() {
+        let time = Utc::now();
+        let dataset = Dataset::from_atmospheres(vec![(time, nan_atmosphere())]).unwrap();
+        let simulator = Simulator::new(SimConfig {
+            launch_site: Geodetic { lat: 0.5, lon: 0.5, alt: 500.0 },
+            ascent: test_ascent(),
+            ground_descend_rate_m_s: 5.0,
+            burst_altitude_m: 2000.0,
+            dt: 5.0,
+        }, dataset, time);
+        // 放球高度より低い海面・高い山地、海抜0 m未満の地面も判定する。
+        for surface in [0.0, 1200.0, -50.0] {
+            let trajectory = simulator.run_with_ground(|_, _| surface);
+            let last = trajectory.states.last().unwrap();
+            let previous = trajectory.states[trajectory.states.len() - 2];
+            assert!(last.is_burst);
+            assert_eq!(last.alt, surface);
+            assert!(previous.alt > surface);
+            assert!(last.time > previous.time && last.time - previous.time <= 1.0);
+            // 補正前のRK4高度も地表に十分近いこと（高度だけを丸めていない）。
+            let computed = simulator.rk4_step(&previous, last.time - previous.time);
+            assert!((computed.alt - surface).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn landing_follows_terrain_at_drifting_position() {
+        let time = Utc::now();
+        let mut levels = BTreeMap::new();
+        levels.insert(100_000, AtmosphereLayer {
+            u_wind: grid(20.0), v_wind: grid(0.0),
+            temp_k: grid(288.15), height_gpm: grid(0.0),
+        });
+        let dataset = Dataset::from_atmospheres(vec![(time, Atmosphere::for_test(levels))]).unwrap();
+        let simulator = Simulator::new(SimConfig {
+            launch_site: Geodetic { lat: 0.5, lon: 0.5, alt: 100.0 },
+            ascent: test_ascent(), ground_descend_rate_m_s: 5.0,
+            burst_altitude_m: 1500.0, dt: 5.0,
+        }, dataset, time);
+        let slope = |_: f64, lon: f64| 100.0 + (lon - 0.5) * 4000.0;
+        let trajectory = simulator.run_with_ground(slope);
+        let landed = trajectory.states.last().unwrap();
+        assert!(landed.lon > 0.5);
+        assert!(landed.alt > 100.0);
+        assert!((landed.alt - slope(landed.lat, landed.lon)).abs() < 1e-5);
+        let previous = trajectory.states[trajectory.states.len() - 2];
+        assert!(previous.alt > slope(previous.lat, previous.lon));
+    }
+
+    #[test]
     fn dynamics_is_finite_with_nan_grid() {
         let dataset = Dataset::from_atmospheres(vec![(Utc::now(), nan_atmosphere())]).unwrap();
         let config = SimConfig {
@@ -438,7 +526,7 @@ mod tests {
             dt: 5.0,
         };
         let simulator = Simulator::new(config, dataset, Utc::now());
-        let trajectory = simulator.run();
+        let trajectory = simulator.run_with_ground(|_, _| 0.0);
 
         assert!(!trajectory.states.is_empty());
         for s in &trajectory.states {

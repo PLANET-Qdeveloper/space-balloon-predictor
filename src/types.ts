@@ -6,6 +6,7 @@ export interface TrajectoryPoint {
 }
 
 export interface PredictionData {
+  terrain_fallback_used: boolean
   model: string
   model_run_time_utc: string
   ascent_path: TrajectoryPoint[]
@@ -19,6 +20,7 @@ export interface PredictionData {
 }
 
 export interface MonteCarloPoint {
+  terrain_fallback_used: boolean
   landing_lat: number
   landing_lon: number
   ascent_rate_m_s: number
