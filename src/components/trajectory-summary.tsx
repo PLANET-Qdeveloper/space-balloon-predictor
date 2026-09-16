@@ -2,6 +2,7 @@ import { useMemo, useState } from "react"
 import { Navigation, Timer, Gauge, Download, CloudSun, ChevronsDown, ChevronsUp, MapPin } from "lucide-react"
 import { AltitudeTimeChart } from "@/components/altitude-time-chart"
 import { Button } from "@/components/ui/button"
+import { formatCoordinateSexagesimal } from "@/lib/coordinates"
 import { haversineKm } from "@/lib/geo"
 import {
   findDefaultSelectedIndex,
@@ -63,12 +64,14 @@ function StatRow({
   value,
   unit,
   dotColor,
+  secondaryValue,
 }: {
   icon: React.ReactNode
   label: string
   value: string
   unit?: string
   dotColor?: string
+  secondaryValue?: string
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
@@ -76,10 +79,17 @@ function StatRow({
         {icon}
         <span className="text-xs">{label}</span>
       </span>
-      <span className="flex items-center gap-1.5 font-medium tabular-nums">
-        {dotColor && <span className={`w-2 h-2 rounded-full ${dotColor}`} />}
-        {value}
-        {unit && <span className="text-xs text-muted-foreground font-normal">{unit}</span>}
+      <span className="flex flex-col items-end font-medium tabular-nums">
+        <span className="flex items-center gap-1.5">
+          {dotColor && <span className={`w-2 h-2 rounded-full ${dotColor}`} />}
+          {value}
+          {unit && <span className="text-xs text-muted-foreground font-normal">{unit}</span>}
+        </span>
+        {secondaryValue && (
+          <span className="text-[11px] text-muted-foreground font-normal whitespace-nowrap">
+            {secondaryValue}
+          </span>
+        )}
       </span>
     </div>
   )
@@ -228,11 +238,13 @@ export function TrajectorySummary({
         icon={<MapPin className="size-3.5" />}
         label="落下地点（緯度）"
         value={formatCoordinate(landingLat)}
+        secondaryValue={formatCoordinateSexagesimal(landingLat, "latitude")}
       />
       <StatRow
         icon={<MapPin className="size-3.5" />}
         label="落下地点（経度）"
         value={formatCoordinate(landingLon)}
+        secondaryValue={formatCoordinateSexagesimal(landingLon, "longitude")}
       />
       {isMonteCarlo && point && point.deviation_sigma != null && (
         <StatRow

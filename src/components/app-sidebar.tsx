@@ -18,9 +18,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useState, useEffect } from "react"
+import {
+  coordinateToSexagesimalParts,
+  parseCoordinate,
+  parseCoordinateParts,
+  type SexagesimalParts,
+} from "@/lib/coordinates"
+import { Fragment, useState, useEffect } from "react"
 
-export type PositionMode = "preset" | "custom" | "map"
+export type PositionMode = "preset" | "custom" | "sexagesimal" | "map"
 
 export type WeatherSource = "gfs" | "gefs"
 
@@ -125,6 +131,97 @@ function formatProgressText(progress: ProgressInfo): string {
   }
 }
 
+interface DecimalCoordinateInputProps {
+  label: string
+  value: string
+  placeholder: string
+  error?: string
+  onChange: (value: string) => void
+  onBlur: React.FocusEventHandler<HTMLInputElement>
+}
+
+function DecimalCoordinateInput({
+  label,
+  value,
+  placeholder,
+  error,
+  onChange,
+  onBlur,
+}: DecimalCoordinateInputProps) {
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="w-8 shrink-0 text-[10px] text-muted-foreground">{label}</span>
+        <InputGroup className="flex-1">
+          <InputGroupInput
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={onBlur}
+            type="text"
+            placeholder={placeholder}
+          />
+          <InputGroupAddon align="inline-end" className="px-1.5">
+            <InputGroupText className="text-xs">°</InputGroupText>
+          </InputGroupAddon>
+        </InputGroup>
+      </div>
+      {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
+    </div>
+  )
+}
+
+interface SexagesimalCoordinateInputProps {
+  label: string
+  parts: SexagesimalParts
+  error?: string
+  onPartChange: (part: keyof SexagesimalParts, value: string) => void
+}
+
+function SexagesimalCoordinateInput({
+  label,
+  parts,
+  error,
+  onPartChange,
+}: SexagesimalCoordinateInputProps) {
+  const segments: {
+    key: keyof SexagesimalParts
+    symbol: string
+    placeholder: string
+    className: string
+    step: string
+  }[] = [
+    { key: "degrees", symbol: "°", placeholder: "度", className: "flex-[3]", step: "1" },
+    { key: "minutes", symbol: "'", placeholder: "分", className: "flex-[2]", step: "1" },
+    { key: "seconds", symbol: '"', placeholder: "秒", className: "flex-[3]", step: "any" },
+  ]
+
+  return (
+    <div>
+      <div className="flex items-center gap-1.5">
+        <span className="w-8 shrink-0 text-[10px] text-muted-foreground">{label}</span>
+        <InputGroup className="flex-1 gap-0.5">
+          {segments.map((segment) => (
+            <Fragment key={segment.key}>
+              <InputGroupInput
+                className={`min-w-0 ${segment.className}`}
+                value={parts[segment.key]}
+                onChange={(e) => onPartChange(segment.key, e.target.value)}
+                type="number"
+                step={segment.step}
+                placeholder={segment.placeholder}
+              />
+              <InputGroupAddon align="inline-end" className="!order-none px-1">
+                <InputGroupText className="text-xs">{segment.symbol}</InputGroupText>
+              </InputGroupAddon>
+            </Fragment>
+          ))}
+        </InputGroup>
+      </div>
+      {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
+    </div>
+  )
+}
+
 export function AppSidebar({
   onSubmit,
   progress = null,
@@ -136,6 +233,14 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const [popoverOpen, setPopoverOpen] = useState(false)
   const [startInDescent, setStartInDescent] = useState(false)
+  const [launchLatInput, setLaunchLatInput] = useState(() => String(launchLat))
+  const [launchLonInput, setLaunchLonInput] = useState(() => String(launchLon))
+  const [launchLatSexagesimal, setLaunchLatSexagesimal] = useState<SexagesimalParts>(
+    () => coordinateToSexagesimalParts(launchLat),
+  )
+  const [launchLonSexagesimal, setLaunchLonSexagesimal] = useState<SexagesimalParts>(
+    () => coordinateToSexagesimalParts(launchLon),
+  )
 
   const defaultValues: PredictorFormValues = {
     launchLat: launchLat ?? DEFAULT_LAT,
@@ -177,17 +282,30 @@ export function AppSidebar({
     if (currentLon !== launchLon) {
       form.setFieldValue("launchLon", launchLon)
     }
+    setLaunchLatInput(String(launchLat))
+    setLaunchLonInput(String(launchLon))
+    setLaunchLatSexagesimal(coordinateToSexagesimalParts(launchLat))
+    setLaunchLonSexagesimal(coordinateToSexagesimalParts(launchLon))
   }, [launchLat, launchLon, form])
 
   const handlePresetSelect = (preset: typeof PRESETS[number]) => {
     onPositionModeChange("preset")
     onLaunchPositionChange(preset.lat, preset.lon)
+    setLaunchLatInput(String(preset.lat))
+    setLaunchLonInput(String(preset.lon))
+    setLaunchLatSexagesimal(coordinateToSexagesimalParts(preset.lat))
+    setLaunchLonSexagesimal(coordinateToSexagesimalParts(preset.lon))
     form.setFieldValue("launchAltitude", String(preset.elevation))
     setPopoverOpen(false)
   }
 
   const handleCustomSelect = () => {
     onPositionModeChange("custom")
+    setPopoverOpen(false)
+  }
+
+  const handleSexagesimalSelect = () => {
+    onPositionModeChange("sexagesimal")
     setPopoverOpen(false)
   }
 
@@ -199,10 +317,12 @@ export function AppSidebar({
   const matchedPreset = findPreset(launchLat, launchLon)
   const triggerLabel =
     positionMode === "custom"
-      ? "直接入力"
-      : positionMode === "map"
-        ? "地図から選択"
-        : (matchedPreset ? matchedPreset.name : "選択済み")
+      ? "直接入力（10進数）"
+      : positionMode === "sexagesimal"
+        ? "直接入力（60進数）"
+        : positionMode === "map"
+          ? "地図から選択"
+          : (matchedPreset ? matchedPreset.name : "選択済み")
 
   const scatterFields = (
     <>
@@ -299,7 +419,15 @@ export function AppSidebar({
                       className={`flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md text-left hover:bg-accent hover:text-accent-foreground ${positionMode === "custom" ? "bg-accent text-accent-foreground" : ""}`}
                     >
                       <Pencil className="size-3.5 shrink-0 text-muted-foreground" />
-                      直接入力
+                      直接入力（10進数）
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSexagesimalSelect}
+                      className={`flex items-center gap-2 w-full px-2 py-1.5 text-sm rounded-md text-left hover:bg-accent hover:text-accent-foreground ${positionMode === "sexagesimal" ? "bg-accent text-accent-foreground" : ""}`}
+                    >
+                      <Pencil className="size-3.5 shrink-0 text-muted-foreground" />
+                      直接入力（60進数）
                     </button>
                     <button
                       type="button"
@@ -314,42 +442,39 @@ export function AppSidebar({
               </Popover>
 
               {positionMode === "custom" && (
-                <div className="flex gap-2 mt-1.5">
+                <div className="flex flex-col gap-2 mt-1.5">
                   <form.Field
                     name="launchLat"
                     validators={{
                       onChange: ({ value }) => {
-                        if (value === undefined || value === null || isNaN(value)) return "緯度を入力してください"
+                        if (value === undefined || value === null || !Number.isFinite(value)) {
+                          return "緯度を入力してください"
+                        }
                         if (value < -90 || value > 90) return "緯度は -90〜90 の範囲で入力してください"
                         return undefined
                       },
                     }}
                     children={(latField) => (
-                      <div className="flex-1">
-                        <InputGroup>
-                          <InputGroupInput
-                            value={latField.state.value?.toString() ?? ""}
-                            onChange={(e) => {
-                              const val = e.target.value
-                              const num = val === "" ? NaN : parseFloat(val)
-                              latField.handleChange(num)
-                              if (!isNaN(num) && num >= -90 && num <= 90) {
-                                onLaunchPositionChange(num, form.getFieldValue("launchLon"))
-                              }
-                            }}
-                            onBlur={latField.handleBlur}
-                            type="number"
-                            step="any"
-                            placeholder="緯度"
-                          />
-                          <InputGroupAddon align="inline-start">
-                            <span className="text-[10px] text-muted-foreground">緯度</span>
-                          </InputGroupAddon>
-                        </InputGroup>
-                        {latField.state.meta.isTouched && latField.state.meta.errors.length ? (
-                          <p className="text-[11px] text-red-500 mt-1">{latField.state.meta.errors.join(", ")}</p>
-                        ) : null}
-                      </div>
+                      <DecimalCoordinateInput
+                        label="緯度"
+                        value={launchLatInput}
+                        placeholder="例: 33.12345"
+                        error={
+                          latField.state.meta.isTouched && latField.state.meta.errors.length
+                            ? latField.state.meta.errors.join(", ")
+                            : undefined
+                        }
+                        onChange={(val) => {
+                          const num = parseCoordinate(val, "latitude")
+                          setLaunchLatInput(val)
+                          latField.handleChange(num ?? NaN)
+                          const lon = form.getFieldValue("launchLon")
+                          if (num !== undefined && Number.isFinite(lon)) {
+                            onLaunchPositionChange(num, lon)
+                          }
+                        }}
+                        onBlur={latField.handleBlur}
+                      />
                     )}
                   />
 
@@ -357,37 +482,106 @@ export function AppSidebar({
                     name="launchLon"
                     validators={{
                       onChange: ({ value }) => {
-                        if (value === undefined || value === null || isNaN(value)) return "経度を入力してください"
+                        if (value === undefined || value === null || !Number.isFinite(value)) {
+                          return "経度を入力してください"
+                        }
                         if (value < -180 || value > 180) return "経度は -180〜180 の範囲で入力してください"
                         return undefined
                       },
                     }}
                     children={(lonField) => (
-                      <div className="flex-1">
-                        <InputGroup>
-                          <InputGroupInput
-                            value={lonField.state.value?.toString() ?? ""}
-                            onChange={(e) => {
-                              const val = e.target.value
-                              const num = val === "" ? NaN : parseFloat(val)
-                              lonField.handleChange(num)
-                              if (!isNaN(num) && num >= -180 && num <= 180) {
-                                onLaunchPositionChange(form.getFieldValue("launchLat"), num)
-                              }
-                            }}
-                            onBlur={lonField.handleBlur}
-                            type="number"
-                            step="any"
-                            placeholder="経度"
-                          />
-                          <InputGroupAddon align="inline-start">
-                            <span className="text-[10px] text-muted-foreground">経度</span>
-                          </InputGroupAddon>
-                        </InputGroup>
-                        {lonField.state.meta.isTouched && lonField.state.meta.errors.length ? (
-                          <p className="text-[11px] text-red-500 mt-1">{lonField.state.meta.errors.join(", ")}</p>
-                        ) : null}
-                      </div>
+                      <DecimalCoordinateInput
+                        label="経度"
+                        value={launchLonInput}
+                        placeholder="例: 132.50477"
+                        error={
+                          lonField.state.meta.isTouched && lonField.state.meta.errors.length
+                            ? lonField.state.meta.errors.join(", ")
+                            : undefined
+                        }
+                        onChange={(val) => {
+                          const num = parseCoordinate(val, "longitude")
+                          setLaunchLonInput(val)
+                          lonField.handleChange(num ?? NaN)
+                          const lat = form.getFieldValue("launchLat")
+                          if (num !== undefined && Number.isFinite(lat)) {
+                            onLaunchPositionChange(lat, num)
+                          }
+                        }}
+                        onBlur={lonField.handleBlur}
+                      />
+                    )}
+                  />
+                </div>
+              )}
+
+              {positionMode === "sexagesimal" && (
+                <div className="flex flex-col gap-2 mt-1.5">
+                  <form.Field
+                    name="launchLat"
+                    validators={{
+                      onChange: ({ value }) => {
+                        if (value === undefined || value === null || !Number.isFinite(value)) {
+                          return "緯度を入力してください"
+                        }
+                        if (value < -90 || value > 90) return "緯度は -90〜90 の範囲で入力してください"
+                        return undefined
+                      },
+                    }}
+                    children={(latField) => (
+                      <SexagesimalCoordinateInput
+                        label="緯度"
+                        parts={launchLatSexagesimal}
+                        error={
+                          latField.state.meta.isTouched && latField.state.meta.errors.length
+                            ? latField.state.meta.errors.join(", ")
+                            : undefined
+                        }
+                        onPartChange={(part, value) => {
+                          const nextParts = { ...launchLatSexagesimal, [part]: value }
+                          setLaunchLatSexagesimal(nextParts)
+                          const num = parseCoordinateParts(nextParts, "latitude")
+                          latField.handleChange(num ?? NaN)
+                          const lon = form.getFieldValue("launchLon")
+                          if (num !== undefined && Number.isFinite(lon)) {
+                            onLaunchPositionChange(num, lon)
+                          }
+                        }}
+                      />
+                    )}
+                  />
+
+                  <form.Field
+                    name="launchLon"
+                    validators={{
+                      onChange: ({ value }) => {
+                        if (value === undefined || value === null || !Number.isFinite(value)) {
+                          return "経度を入力してください"
+                        }
+                        if (value < -180 || value > 180) return "経度は -180〜180 の範囲で入力してください"
+                        return undefined
+                      },
+                    }}
+                    children={(lonField) => (
+                      <SexagesimalCoordinateInput
+                        label="経度"
+                        parts={launchLonSexagesimal}
+                        error={
+                          lonField.state.meta.isTouched && lonField.state.meta.errors.length
+                            ? lonField.state.meta.errors.join(", ")
+                            : undefined
+                        }
+                        onPartChange={(part, value) => {
+                          const nextParts = { ...launchLonSexagesimal, [part]: value }
+                          setLaunchLonSexagesimal(nextParts)
+                          const num = parseCoordinateParts(nextParts, "longitude")
+                          lonField.handleChange(num ?? NaN)
+                          const lat = form.getFieldValue("launchLat")
+                          if (num !== undefined && Number.isFinite(lat)) {
+                            onLaunchPositionChange(lat, num)
+                          }
+                        }}
+                      />
                     )}
                   />
                 </div>

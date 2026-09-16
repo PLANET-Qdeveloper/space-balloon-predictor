@@ -121,6 +121,14 @@
     * {
         @apply border-border outline-ring/50;
     }
+    input[type="number"] {
+        -moz-appearance: textfield;
+    }
+    input[type="number"]::-webkit-outer-spin-button,
+    input[type="number"]::-webkit-inner-spin-button {
+        margin: 0;
+        -webkit-appearance: none;
+    }
     body {
         @apply bg-background text-foreground;
         margin: 0;
