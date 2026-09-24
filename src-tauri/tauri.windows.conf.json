@@ -1,0 +1,6 @@
+{
+  "build": {
+    "beforeDevCommand": "scripts\\tauri-run.cmd dev",
+    "beforeBuildCommand": "scripts\\tauri-run.cmd build"
+  }
+}
