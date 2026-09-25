@@ -1,3 +1,4 @@
+use crate::engine::terrain::DemSource;
 use crate::dataset::Dataset;
 use crate::grib::Atmosphere;
 use crate::geo::coords::Geodetic;
@@ -86,7 +87,7 @@ pub struct AscentParams {
 }
 
 /// シミュレーションの設定項目
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct SimConfig {
     pub launch_site: Geodetic,
     /// Descend immediately from the initial position.
@@ -95,6 +96,10 @@ pub struct SimConfig {
     pub ground_descend_rate_m_s: f64,
     pub burst_altitude_m: f64,
     pub dt: f64,
+    /// 着地判定に使う標高データソース。
+    pub dem_source: DemSource,
+    /// OpenTopoData のベース URL（末尾スラッシュなし）。`OpenTopoData` のときのみ使用。
+    pub opentopo_base_url: String,
 }
 
 /// N時刻のGRIBデータと座標変換を保持し、RK4で軌道を計算するシミュレータ
@@ -146,18 +151,24 @@ impl Simulator {
             cumulative_hours.push(prev + diff);
         }
 
-        Self {
-            config,
-            atmospheres,
-            cumulative_hours,
-            launch_offset_hours,
-            ascent_cal: if config.start_in_descent { None } else { calibrate_ascent(
+        let ascent_cal = if config.start_in_descent {
+            None
+        } else {
+            calibrate_ascent(
                 config.ascent.coeff_k,
                 config.ascent.gross_mass_kg,
                 config.ascent.target_rate_m_s,
                 config.launch_site.alt,
                 config.ascent.burst_volume_m3,
-            ) },
+            )
+        };
+
+        Self {
+            config,
+            atmospheres,
+            cumulative_hours,
+            launch_offset_hours,
+            ascent_cal,
         }
     }
 
@@ -317,7 +328,10 @@ impl Simulator {
     }
 
     pub fn run(&self) -> Trajectory {
-        let mut terrain = super::terrain::Terrain::new();
+        let mut terrain = super::terrain::Terrain::new(
+            self.config.dem_source,
+            self.config.opentopo_base_url.as_str(),
+        );
         let mut trajectory = self.run_with_ground(|lat, lon| terrain.elevation(lat, lon));
         trajectory.terrain_fallback_used = terrain.used_fallback();
         trajectory
@@ -398,6 +412,7 @@ impl Simulator {
 mod tests {
     use super::*;
     use crate::dataset::Dataset;
+    use crate::engine::terrain::{DemSource, DEFAULT_OPENTOPO_BASE_URL};
     use crate::geo::grid::LatLonGrid;
     use crate::grib::types::AtmosphereLayer;
     use chrono::Utc;
@@ -448,6 +463,8 @@ mod tests {
             ground_descend_rate_m_s: 5.0,
             burst_altitude_m: 30000.0,
             dt: 5.0,
+            dem_source: DemSource::GsiDem10b,
+            opentopo_base_url: DEFAULT_OPENTOPO_BASE_URL.to_string(),
         }, dataset, time);
         assert!(simulator.ascent_cal.is_none());
         for surface in [0.0, 1200.0, -50.0] {
@@ -475,6 +492,8 @@ mod tests {
             ground_descend_rate_m_s: 5.0,
             burst_altitude_m: 2000.0,
             dt: 5.0,
+            dem_source: DemSource::GsiDem10b,
+            opentopo_base_url: DEFAULT_OPENTOPO_BASE_URL.to_string(),
         }, dataset, time);
         // 放球高度より低い海面・高い山地、海抜0 m未満の地面も判定する。
         for surface in [0.0, 1200.0, -50.0] {
@@ -504,7 +523,10 @@ mod tests {
             start_in_descent: false,
             launch_site: Geodetic { lat: 0.5, lon: 0.5, alt: 100.0 },
             ascent: test_ascent(), ground_descend_rate_m_s: 5.0,
-            burst_altitude_m: 1500.0, dt: 5.0,
+            burst_altitude_m: 1500.0,
+            dt: 5.0,
+            dem_source: DemSource::GsiDem10b,
+            opentopo_base_url: DEFAULT_OPENTOPO_BASE_URL.to_string(),
         }, dataset, time);
         let slope = |_: f64, lon: f64| 100.0 + (lon - 0.5) * 4000.0;
         let trajectory = simulator.run_with_ground(slope);
@@ -530,6 +552,8 @@ mod tests {
             ground_descend_rate_m_s: 5.0,
             burst_altitude_m: 10_000.0,
             dt: 5.0,
+            dem_source: DemSource::GsiDem10b,
+            opentopo_base_url: DEFAULT_OPENTOPO_BASE_URL.to_string(),
         };
         let simulator = Simulator::new(config, dataset, Utc::now());
         let state = BalloonState {
@@ -560,6 +584,8 @@ mod tests {
             ground_descend_rate_m_s: 5.0,
             burst_altitude_m: 10_000.0,
             dt: 5.0,
+            dem_source: DemSource::GsiDem10b,
+            opentopo_base_url: DEFAULT_OPENTOPO_BASE_URL.to_string(),
         };
         let simulator = Simulator::new(config, dataset, Utc::now());
         let trajectory = simulator.run_with_ground(|_, _| 0.0);
@@ -593,6 +619,8 @@ mod tests {
             ground_descend_rate_m_s: 5.0,
             burst_altitude_m: 35_000.0,
             dt: 5.0,
+            dem_source: DemSource::GsiDem10b,
+            opentopo_base_url: DEFAULT_OPENTOPO_BASE_URL.to_string(),
         };
         let simulator = Simulator::new(config, dataset, Utc::now());
         let low = BalloonState {

@@ -3963,6 +3963,8 @@ dependencies = [
  "grib-reader",
  "log",
  "reqwest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
