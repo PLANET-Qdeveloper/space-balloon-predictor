@@ -54,19 +54,10 @@ DEMの解像度と最大1秒の判定間隔より細かい地形や障害物は�
 
 ### 開発環境のセットアップ
 
-- Rust
-- Node.js（npm を使う場合）または [Bun](https://bun.sh/)
+- [Rust](https://rust-lang.org/ja/tools/install/)
+- [Bun](https://bun.sh/)
 
-のインストールが必要です。どちらのパッケージマネージャでも開発できます。
-`tauri dev` / `tauri build` 時のフロント起動は、lockfile に応じて bun / npm / pnpm を自動選択します。
-
-#### npm
-
-```bash
-npm install
-```
-
-#### Bun
+のインストールが必要です。
 
 ```bash
 bun install
@@ -74,27 +65,11 @@ bun install
 
 ### 開発サーバーの起動
 
-#### npm
-
-```bash
-npm run tauri dev
-```
-
-#### Bun
-
 ```bash
 bun run tauri dev
 ```
 
 ### ビルド
-
-#### npm
-
-```bash
-npm run tauri build
-```
-
-#### Bun
 
 ```bash
 bun run tauri build

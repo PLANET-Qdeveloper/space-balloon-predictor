@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.user.space-balloon-predictor",
   "build": {
-    "beforeDevCommand": "sh scripts/tauri-run.sh dev",
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "sh scripts/tauri-run.sh build",
+    "beforeBuildCommand": "bun run build",
     "frontendDist": "../dist"
   },
   "app": {
