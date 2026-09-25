@@ -68,6 +68,8 @@ function App() {
           burstAltitudeStd: (values.startInDescent ? 0 : Number(values.burstAltitudeStd)),
           numMembers: Number(values.gefsNumMembers),
           numSamples: Number(values.numSamples),
+          demSource: values.demSource,
+          openTopoBaseUrl: values.openTopoBaseUrl,
         })
         console.log("GEFS ensemble result:", result)
         setMonteCarloData(result)
@@ -87,6 +89,8 @@ function App() {
           burstAltitudeMean: (values.startInDescent ? Number(values.launchAltitude) : Number(values.burstAltitude)),
           burstAltitudeStd: (values.startInDescent ? 0 : Number(values.burstAltitudeStd)),
           numSamples: Number(values.numSamples),
+          demSource: values.demSource,
+          openTopoBaseUrl: values.openTopoBaseUrl,
         })
         console.log("Monte Carlo result:", result)
         setMonteCarloData(result)
@@ -102,6 +106,8 @@ function App() {
           balloonClassG: (values.startInDescent ? 2000 : Number(values.balloonClass)),
           descentRate: Number(values.descentRate),
           burstAltitude: (values.startInDescent ? Number(values.launchAltitude) : Number(values.burstAltitude)),
+          demSource: values.demSource,
+          openTopoBaseUrl: values.openTopoBaseUrl,
         })
         console.log("Simulation result:", result)
         setPredictionData(result)

@@ -6,7 +6,7 @@ import {
   SidebarHeader,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
-import { Balloon, CalendarDays, ChevronsDown, ChevronsUp, Clock, Crosshair, Dice5, Layers, Loader, MapPin, Pencil, Play, Weight } from "lucide-react"
+import { Balloon, CalendarDays, ChevronsDown, ChevronsUp, Clock, Crosshair, Dice5, Layers, Loader, MapPin, Pencil, Play, Settings2, Weight } from "lucide-react"
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group"
 import {
   Field,
@@ -14,7 +14,16 @@ import {
   FieldLabel,
 } from "@/components/ui/field"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
 
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -29,6 +38,10 @@ import { Fragment, useState, useEffect } from "react"
 export type PositionMode = "preset" | "custom" | "sexagesimal" | "map"
 
 export type WeatherSource = "gfs" | "gefs"
+
+export type DemSource = "gsi" | "opentopodata"
+
+export const DEFAULT_OPENTOPO_BASE_URL = "https://api.opentopodata.org"
 
 export interface PredictorFormValues {
   launchLat: number
@@ -49,6 +62,8 @@ export interface PredictorFormValues {
   numSamples: string
   weatherSource: WeatherSource
   gefsNumMembers: string
+  demSource: DemSource
+  openTopoBaseUrl: string
 }
 
 export type ProgressInfo =
@@ -261,6 +276,8 @@ export function AppSidebar({
     numSamples: "50",
     weatherSource: "gfs",
     gefsNumMembers: "31",
+    demSource: "gsi",
+    openTopoBaseUrl: DEFAULT_OPENTOPO_BASE_URL,
   }
 
   const form = useForm({
@@ -1108,7 +1125,72 @@ export function AppSidebar({
           </SidebarMenuItem>
         </SidebarContent>
 
-        <SidebarFooter>
+        <SidebarFooter className="gap-2">
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button type="button" variant="outline" className="w-full">
+                <Settings2 className="mr-2 h-4 w-4" />
+                詳細設定
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="w-[min(100%,22rem)] sm:max-w-sm">
+              <SheetHeader>
+                <SheetTitle>詳細設定</SheetTitle>
+                <SheetDescription>
+                  メイン画面を圧迫しない設定項目です。
+                </SheetDescription>
+              </SheetHeader>
+              <div className="flex flex-col gap-4 px-4 pb-4">
+                <form.Field
+                  name="demSource"
+                  children={(field) => (
+                    <Field>
+                      <FieldLabel htmlFor={field.name}>標高データ（DEM）</FieldLabel>
+                      <Select
+                        value={field.state.value}
+                        onValueChange={(val) => field.handleChange(val as DemSource)}
+                      >
+                        <SelectTrigger id={field.name} className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="gsi">国土地理院 DEM10B（日本）</SelectItem>
+                          <SelectItem value="opentopodata">OpenTopoData SRTM30m（海外向け）</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-muted-foreground text-xs leading-relaxed">
+                        日本国内は国土地理院、モンゴルなど海外は OpenTopoData（SRTM 30m）を選んでください。取得できない地点は海抜 0 m で近似します。公開 API はレート制限があるため、ローカルにデプロイしたサーバーを指定すると速くなります。
+                      </p>
+                    </Field>
+                  )}
+                />
+                <form.Subscribe
+                  selector={(state) => state.values.demSource}
+                  children={(demSource) =>
+                    demSource === "opentopodata" ? (
+                      <form.Field
+                        name="openTopoBaseUrl"
+                        children={(field) => (
+                          <Field>
+                            <FieldLabel htmlFor={field.name}>OpenTopoData URL</FieldLabel>
+                            <Input
+                              id={field.name}
+                              value={field.state.value}
+                              placeholder={DEFAULT_OPENTOPO_BASE_URL}
+                              onChange={(e) => field.handleChange(e.target.value)}
+                            />
+                            <p className="text-muted-foreground text-xs leading-relaxed">
+                              既定は公開 API（{DEFAULT_OPENTOPO_BASE_URL}）。セルフホスト時は例: http://127.0.0.1:5000
+                            </p>
+                          </Field>
+                        )}
+                      />
+                    ) : null
+                  }
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
           <form.Subscribe
             selector={(state) => [state.canSubmit, state.isSubmitting]}
             children={([canSubmit, isSubmitting]) => (

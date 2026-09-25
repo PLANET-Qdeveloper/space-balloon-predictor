@@ -13,12 +13,30 @@ use space_balloon_predictor_rs::dataset::gfs::REGION_MARGIN_DEG;
 use space_balloon_predictor_rs::dataset::gefs::{GefsMember, GefsResolution};
 use space_balloon_predictor_rs::engine::simulation::{AscentParams, SimConfig, Simulator, Trajectory};
 use space_balloon_predictor_rs::engine::physics::ascent_coeff_k;
+use space_balloon_predictor_rs::engine::{
+    normalize_opentopo_base_url, DemSource, DEFAULT_OPENTOPO_BASE_URL,
+};
 use space_balloon_predictor_rs::geo::coords::{EARTH_RADIUS, Geodetic};
 use space_balloon_predictor_rs::grib::{HeightUnit, PressureUnit};
 
 use rand::Rng;
 use rand_distr::Normal;
 use rayon::prelude::*;
+
+fn parse_dem_source(raw: Option<String>) -> Result<DemSource, String> {
+    match raw.as_deref().unwrap_or("gsi") {
+        "gsi" => Ok(DemSource::GsiDem10b),
+        "opentopodata" => Ok(DemSource::OpenTopoData),
+        other => Err(format!(
+            "Unknown dem_source '{}'. Use 'gsi' or 'opentopodata'.",
+            other
+        )),
+    }
+}
+
+fn parse_opentopo_base_url(raw: Option<String>) -> String {
+    normalize_opentopo_base_url(raw.as_deref().unwrap_or(DEFAULT_OPENTOPO_BASE_URL))
+}
 
 #[derive(Serialize, Clone)]
 #[serde(tag = "stage", rename_all = "snake_case")]
@@ -864,8 +882,12 @@ async fn run_simulation(
     balloon_class_g: u32,
     descent_rate: f64,
     burst_altitude: f64,
+    dem_source: Option<String>,
+    opentopo_base_url: Option<String>,
 ) -> Result<SimulationResult, String> {
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let dem_source = parse_dem_source(dem_source)?;
+    let opentopo_base_url = parse_opentopo_base_url(opentopo_base_url);
     let start_in_descent = start_in_descent.unwrap_or(false);
     let ascent_rate = if start_in_descent { 5.0 } else { ascent_rate };
     let ascent = if start_in_descent {
@@ -912,6 +934,8 @@ async fn run_simulation(
             ground_descend_rate_m_s: descent_rate,
             burst_altitude_m: burst_altitude,
             dt: 5.0,
+            dem_source,
+            opentopo_base_url,
         };
 
         println!("Running simulation...");
@@ -946,8 +970,12 @@ async fn run_monte_carlo(
     burst_altitude_mean: f64,
     burst_altitude_std: f64,
     num_samples: u32,
+    dem_source: Option<String>,
+    opentopo_base_url: Option<String>,
 ) -> Result<MonteCarloResult, String> {
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let dem_source = parse_dem_source(dem_source)?;
+    let opentopo_base_url = parse_opentopo_base_url(opentopo_base_url);
     let start_in_descent = start_in_descent.unwrap_or(false);
     let ascent_rate = if start_in_descent { 5.0 } else { ascent_rate };
     let ascent = if start_in_descent {
@@ -1062,6 +1090,8 @@ async fn run_monte_carlo(
                     ground_descend_rate_m_s: sample.descent_rate_m_s,
                     burst_altitude_m: sample.burst_altitude_m,
                     dt: 5.0,
+            dem_source,
+            opentopo_base_url: opentopo_base_url.clone(),
                 };
 
                 let simulator = Simulator::new(config, dataset.clone(), launch);
@@ -1112,6 +1142,8 @@ async fn run_monte_carlo(
             ground_descend_rate_m_s: descent_rate,
             burst_altitude_m: burst_altitude_mean,
             dt: 5.0,
+            dem_source,
+            opentopo_base_url,
         };
         let mean_sim = Simulator::new(mean_config, dataset, launch);
         let mean_trajectory = mean_sim.run();
@@ -1156,8 +1188,12 @@ async fn run_gefs_simulation(
     burst_altitude_std: f64,
     num_members: u32,
     num_samples: u32,
+    dem_source: Option<String>,
+    opentopo_base_url: Option<String>,
 ) -> Result<MonteCarloResult, String> {
     let launch: DateTime<Utc> = launch_time.parse().map_err(|e| format!("Invalid launch_time: {}", e))?;
+    let dem_source = parse_dem_source(dem_source)?;
+    let opentopo_base_url = parse_opentopo_base_url(opentopo_base_url);
     let gefs_run = select_model_run_time(Utc::now(), launch);
     println!(
         "Using GEFS model run {} for launch {}",
@@ -1295,6 +1331,8 @@ async fn run_gefs_simulation(
                         ground_descend_rate_m_s: sample.descent_rate_m_s,
                         burst_altitude_m: sample.burst_altitude_m,
                         dt: 5.0,
+            dem_source,
+            opentopo_base_url: opentopo_base_url.clone(),
                     };
 
                     let simulator = Simulator::new(config, dataset.clone(), launch);
@@ -1343,6 +1381,8 @@ async fn run_gefs_simulation(
                         ground_descend_rate_m_s: descent_rate,
                         burst_altitude_m: burst_altitude_mean,
                         dt: 5.0,
+            dem_source,
+            opentopo_base_url: opentopo_base_url.clone(),
                     };
                     let mean_sim = Simulator::new(mean_config, dataset.clone(), launch);
                     let mean_result = trajectory_to_result(

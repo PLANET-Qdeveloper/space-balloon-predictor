@@ -11,6 +11,7 @@ use space_balloon_predictor_rs::grib::{HeightUnit, PressureUnit};
 use space_balloon_predictor_rs::export::kml;
 use space_balloon_predictor_rs::engine::simulation::{AscentParams, SimConfig, Simulator, Trajectory};
 use space_balloon_predictor_rs::engine::physics::ascent_coeff_k;
+use space_balloon_predictor_rs::engine::DemSource;
 
 fn build_ascent(
     ascent: f64,
@@ -257,6 +258,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ground_descend_rate_m_s: descent,
                 burst_altitude_m: burst,
                 dt: 5.0,
+                dem_source: DemSource::GsiDem10b,
+                opentopo_base_url: space_balloon_predictor_rs::engine::DEFAULT_OPENTOPO_BASE_URL
+                    .to_string(),
             };
             let trajectory = Simulator::new(config, dataset, launch_time).run();
 
@@ -327,6 +331,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ground_descend_rate_m_s: descent,
                 burst_altitude_m: burst,
                 dt: 5.0,
+                dem_source: DemSource::GsiDem10b,
+                opentopo_base_url: space_balloon_predictor_rs::engine::DEFAULT_OPENTOPO_BASE_URL
+                    .to_string(),
             };
             let trajectory = Simulator::new(config, dataset, launch_time).run();
 
